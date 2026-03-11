@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Target, RefreshCw, XCircle, CheckCircle2, Clock, Loader2, AlertCircle, Info } from 'lucide-react'
 import { RichTooltip } from '@/components/ui/rich-tooltip'
+import { SkeletonCard, SkeletonKPI } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import type { Job } from '@/types/api'
@@ -22,7 +23,7 @@ const STATUS_TOOLTIP: Record<string, { priority: 'critical'|'high'|'medium'|'low
   },
   running: {
     priority: 'low',
-    desc: 'Job em execução ativa agora. Ferramentas rodando: subfinder, httpx, gau, naabu, ffuf, dnsx. Pode levar de segundos a vários minutos dependendo do target.',
+    desc: 'Job em execução ativa agora. Ferramentas: subfinder, httpx, katana, gau, nuclei, naabu, ffuf, dnsx, dalfox, sqlmap, arjun, gitleaks, kiterunner. Pode levar de segundos a vários minutos.',
     actions: ['Aguarde a conclusão — não cancele sem necessidade.', 'Clique em "Cancelar" se o job estiver travado há mais de 30 minutos.', 'Verifique os logs na página Logs → Worker para detalhes em tempo real.'],
   },
   completed: {
@@ -38,20 +39,37 @@ const STATUS_TOOLTIP: Record<string, { priority: 'critical'|'high'|'medium'|'low
 }
 
 const TYPE_TOOLTIP: Record<string, { desc: string; creates_findings: boolean; tools: string }> = {
-  recon:      { desc: 'Reconhecimento completo: enumera subdomínios, probes hosts HTTP ativos e coleta URLs históricas.',    creates_findings: true,  tools: 'subfinder + httpx + gau' },
-  dir_fuzz:   { desc: 'Força bruta de diretórios HTTP buscando caminhos ocultos, backups, painéis admin e arquivos expostos.', creates_findings: true,  tools: 'ffuf (wordlist interna)' },
-  param_fuzz: { desc: 'Testa parâmetros de URL com payloads para detectar injeções, traversal e comportamentos inesperados.', creates_findings: false, tools: 'ffuf (param mode)' },
-  sub_fuzz:   { desc: 'Força bruta de subdomínios. Subdomínios encontrados são adicionados como novos targets automaticamente.', creates_findings: false, tools: 'ffuf (subdomain mode)' },
-  idor:       { desc: 'Testa IDs sequenciais para detectar acesso não autorizado a recursos de outros usuários (IDOR/BOLA).',  creates_findings: true,  tools: 'httpx (baseline comparison)' },
-  port_scan:  { desc: 'Escaneia portas TCP para encontrar serviços expostos: bancos de dados, painéis admin, SSH, etc.',      creates_findings: true,  tools: 'naabu' },
-  dns_recon:  { desc: 'Analisa registros DNS, detecta SPF permissivo (+all), subdomain takeover e misconfigurações de DNS.',  creates_findings: true,  tools: 'dnsx' },
-  pipeline:   { desc: 'Pipeline de automação completo: gera relatório com IA (Ollama) e submete ao HackerOne se score ≥ 70%.', creates_findings: false, tools: 'Ollama + HackerOne API' },
+  recon:           { desc: 'Reconhecimento completo: enumera subdomínios, probes hosts HTTP ativos e coleta URLs históricas.',    creates_findings: true,  tools: 'subfinder + httpx + katana + gau + nuclei' },
+  dir_fuzz:        { desc: 'Força bruta de diretórios HTTP buscando caminhos ocultos, backups, painéis admin e arquivos expostos.', creates_findings: true,  tools: 'ffuf (wordlist interna)' },
+  param_fuzz:      { desc: 'Testa parâmetros de URL com payloads para detectar injeções, traversal e comportamentos inesperados.', creates_findings: false, tools: 'ffuf (param mode)' },
+  sub_fuzz:        { desc: 'Força bruta de subdomínios. Subdomínios encontrados são adicionados como novos targets automaticamente.', creates_findings: false, tools: 'ffuf (subdomain mode)' },
+  idor:            { desc: 'Testa IDs sequenciais para detectar acesso não autorizado a recursos de outros usuários (IDOR/BOLA).',  creates_findings: true,  tools: 'httpx (baseline comparison)' },
+  port_scan:       { desc: 'Escaneia portas TCP para encontrar serviços expostos: bancos de dados, painéis admin, SSH, etc.',      creates_findings: true,  tools: 'naabu' },
+  dns_recon:       { desc: 'Analisa registros DNS, detecta SPF permissivo (+all), subdomain takeover e misconfigurações de DNS.',  creates_findings: true,  tools: 'dnsx' },
+  xss_scan:        { desc: 'Scanner XSS com Dalfox: detecta reflected, DOM e blind XSS analisando parâmetros de URLs coletadas.',  creates_findings: true,  tools: 'dalfox + gau' },
+  sqli_scan:       { desc: 'Detecção de SQL Injection com SQLMap: testa boolean-based, time-based, union e error-based injection.',  creates_findings: true,  tools: 'sqlmap' },
+  param_discovery: { desc: 'Descobre parâmetros HTTP ocultos (GET/POST/JSON) que não aparecem na UI. Fundamental para encontrar funcionalidades escondidas.', creates_findings: true, tools: 'arjun' },
+  js_analysis:     { desc: 'Analisa arquivos JavaScript em busca de endpoints ocultos, API keys, tokens e credenciais expostas.',   creates_findings: true,  tools: 'linkfinder + secretfinder (custom)' },
+  secret_scan:     { desc: 'Escaneia repositórios Git públicos em busca de secrets, API keys e credenciais no histórico de commits.', creates_findings: true, tools: 'gitleaks' },
+  api_scan:        { desc: 'Descobre rotas de API REST com Kiterunner e testa GraphQL introspection. Complementa o recon para APIs modernas.', creates_findings: true, tools: 'kiterunner + nuclei' },
+  pipeline:        { desc: 'Pipeline de automação completo: gera relatório com IA (Ollama) e submete ao HackerOne se score ≥ 70%.', creates_findings: false, tools: 'Ollama + HackerOne API' },
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  recon: 'Recon', dir_fuzz: 'Dir Fuzz', param_fuzz: 'Param Fuzz',
-  sub_fuzz: 'Sub Fuzz', idor: 'IDOR', port_scan: 'Port Scan', dns_recon: 'DNS Recon',
-  pipeline: 'Pipeline',
+  recon:           'Recon',
+  dir_fuzz:        'Dir Fuzz',
+  param_fuzz:      'Param Fuzz',
+  sub_fuzz:        'Sub Fuzz',
+  idor:            'IDOR',
+  port_scan:       'Port Scan',
+  dns_recon:       'DNS Recon',
+  xss_scan:        'XSS Scan',
+  sqli_scan:       'SQLi Scan',
+  param_discovery: 'Param Discovery',
+  js_analysis:     'JS Analysis',
+  secret_scan:     'Secret Scan',
+  api_scan:        'API Scan',
+  pipeline:        'Pipeline',
 }
 
 export default function JobsPage() {
@@ -135,8 +153,9 @@ export default function JobsPage() {
       {/* Stats with tooltips */}
       {jobs.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {Object.entries(STATUS_CONFIG).map(([key, cfg]) => {
+          {Object.entries(STATUS_CONFIG).map(([key, cfg], idx) => {
             const tt = STATUS_TOOLTIP[key]
+            const HOV_COLORS = ['hov-yellow', 'hov-cyan', 'hov-emerald', 'hov-red']
             return (
               <RichTooltip key={key} content={{
                 title: `Jobs ${cfg.label}`,
@@ -148,8 +167,8 @@ export default function JobsPage() {
                 <button
                   onClick={() => setStatusFilter(statusFilter === key ? '' : key)}
                   className={cn(
-                    'w-full p-3 rounded-xl border text-left transition-all group',
-                    statusFilter === key ? 'border-primary/40 bg-primary/8' : 'bg-card border-border hover:border-border/80'
+                    'w-full p-3 rounded-xl border text-left transition-all group geo-shadow',
+                    statusFilter === key ? 'border-primary/40 bg-primary/8' : `bg-card border-border ${HOV_COLORS[idx] ?? ''}`
                   )}
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -165,8 +184,13 @@ export default function JobsPage() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <RefreshCw size={20} className="animate-spin text-muted-foreground" />
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonKPI key={i} />)}
+          </div>
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
         </div>
       ) : jobs.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">

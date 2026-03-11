@@ -1,20 +1,28 @@
 """
-services/ai_reporter.py — Geração de relatórios com IA
+services/ai_reporter.py — Geração e revisão de relatórios com IA
 
 Provedor primário : Ollama local (xploiter/the-xploiter:latest em http://host.docker.internal:11434)
 Fallback          : Claude (Anthropic) se o Ollama não estiver acessível
 
-Fluxo:
+Fluxo de geração:
   1. Monta prompt estruturado no formato HackerOne
   2. Tenta Ollama via POST /api/generate (stream=false)
   3. Se falhar, cai no Claude via SDK Anthropic
   4. Retorna (markdown, prompt_tokens, completion_tokens)
+
+Fluxo de revisão (pré-submissão):
+  1. Recebe o markdown gerado
+  2. Pede à IA para avaliar qualidade e formato HackerOne
+  3. Retorna ReviewResult com score, notas e relatório corrigido se necessário
 """
+import logging
 import httpx
 import anthropic
 
 from app.config import settings
 from app.models.finding import Finding
+
+logger = logging.getLogger(__name__)
 
 
 def _build_prompt(finding: Finding) -> str:
@@ -125,12 +133,151 @@ async def generate_report(finding: Finding) -> tuple[str, int, int]:
     # ── Tenta Ollama (modelo local) ────────────────────────────────────────
     try:
         content, pt, ct = await _generate_ollama(prompt)
-        print(f"[ai_reporter] Relatório gerado via Ollama ({settings.OLLAMA_MODEL}): {ct} tokens")
+        logger.info("[ai_reporter] Relatório gerado via Ollama (%s): %d tokens", settings.OLLAMA_MODEL, ct)
         return content, pt, ct
     except Exception as ollama_err:
-        print(f"[ai_reporter] Ollama indisponível ({ollama_err}) — usando Claude como fallback")
+        logger.warning("[ai_reporter] Ollama indisponível (%s) — usando Claude como fallback", ollama_err)
 
     # ── Fallback: Claude ───────────────────────────────────────────────────
     content, pt, ct = await _generate_claude(prompt)
-    print(f"[ai_reporter] Relatório gerado via Claude: {ct} tokens")
+    logger.info("[ai_reporter] Relatório gerado via Claude: %d tokens", ct)
     return content, pt, ct
+
+
+# ── HackerOne format sections required ────────────────────────────────────────
+_H1_REQUIRED_SECTIONS = [
+    "Severidade",
+    "Resumo",
+    "Passos para Reproduzir",
+    "Impacto",
+    "Recomendação de Correção",
+]
+
+
+def _build_review_prompt(report_markdown: str, finding_title: str, severity: str) -> str:
+    sections = "\n".join(f"- {s}" for s in _H1_REQUIRED_SECTIONS)
+    return f"""Você é um revisor experiente de relatórios de bug bounty da HackerOne.
+Analise o relatório abaixo e avalie:
+
+1. Se contém TODAS as seções obrigatórias: {sections}
+2. Se os passos para reproduzir são claros e numerados
+3. Se o impacto está bem documentado
+4. Se a severidade "{severity}" está justificada no texto
+5. Se o português é técnico e profissional
+
+RELATÓRIO A REVISAR:
+---
+{report_markdown}
+---
+
+Responda EXATAMENTE neste formato JSON (sem markdown, só o JSON):
+{{
+  "quality_score": <0-100>,
+  "approved": <true/false — true se score >= 70>,
+  "missing_sections": [<lista de seções faltando ou vazias>],
+  "issues": [<lista de problemas encontrados, máx 5>],
+  "suggestions": [<lista de melhorias específicas, máx 3>],
+  "summary": "<1 frase resumindo a qualidade>"
+}}"""
+
+
+async def _review_via_ollama(prompt: str) -> str:
+    url = f"{settings.OLLAMA_URL.rstrip('/')}/api/generate"
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(url, json={
+            "model": settings.OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 512},
+        })
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
+
+
+async def _review_via_claude(prompt: str) -> str:
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip()
+
+
+class ReviewResult:
+    def __init__(
+        self,
+        quality_score: int,
+        approved: bool,
+        missing_sections: list[str],
+        issues: list[str],
+        suggestions: list[str],
+        summary: str,
+    ):
+        self.quality_score = quality_score
+        self.approved = approved
+        self.missing_sections = missing_sections
+        self.issues = issues
+        self.suggestions = suggestions
+        self.summary = summary
+
+    def to_dict(self) -> dict:
+        return {
+            "quality_score": self.quality_score,
+            "approved": self.approved,
+            "missing_sections": self.missing_sections,
+            "issues": self.issues,
+            "suggestions": self.suggestions,
+            "summary": self.summary,
+        }
+
+
+async def review_report(report_markdown: str, finding_title: str, severity: str) -> ReviewResult:
+    """
+    Envia o relatório gerado para revisão da IA antes de submeter ao HackerOne.
+    Verifica estrutura, qualidade e aderência ao formato H1.
+    """
+    import json
+
+    # Validação estática rápida (sem IA)
+    missing_static = [s for s in _H1_REQUIRED_SECTIONS if s.lower() not in report_markdown.lower()]
+
+    prompt = _build_review_prompt(report_markdown, finding_title, severity)
+
+    raw_json = ""
+    try:
+        try:
+            raw_json = await _review_via_ollama(prompt)
+        except Exception:
+            if settings.ANTHROPIC_API_KEY:
+                raw_json = await _review_via_claude(prompt)
+            else:
+                raise
+
+        # Extrai JSON da resposta (pode ter texto ao redor)
+        start = raw_json.find("{")
+        end = raw_json.rfind("}") + 1
+        if start >= 0 and end > start:
+            raw_json = raw_json[start:end]
+
+        data = json.loads(raw_json)
+        return ReviewResult(
+            quality_score=int(data.get("quality_score", 50)),
+            approved=bool(data.get("approved", False)),
+            missing_sections=data.get("missing_sections", missing_static),
+            issues=data.get("issues", []),
+            suggestions=data.get("suggestions", []),
+            summary=data.get("summary", "Revisão automática"),
+        )
+
+    except Exception as e:
+        logger.warning("[ai_reporter] Revisão falhou (%s) — usando validação estática", e)
+        score = max(0, 100 - len(missing_static) * 20)
+        return ReviewResult(
+            quality_score=score,
+            approved=len(missing_static) == 0,
+            missing_sections=missing_static,
+            issues=[f"Revisão automática indisponível: {e}"],
+            suggestions=[],
+            summary="Revisão estática (IA indisponível)",
+        )

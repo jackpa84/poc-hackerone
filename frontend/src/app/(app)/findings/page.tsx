@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Bug, RefreshCw, AlertCircle, ExternalLink, Info } from 'lucide-react'
 import { RichTooltip } from '@/components/ui/rich-tooltip'
+import { SkeletonCard } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import type { Finding } from '@/types/api'
@@ -160,8 +161,10 @@ export default function FindingsPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <RefreshCw size={20} className="animate-spin text-muted-foreground" />
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
         </div>
       ) : findings.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
@@ -196,7 +199,7 @@ export default function FindingsPage() {
                   f.status === 'accepted' ? '⚡ Pipeline: este finding está pronto para submissão automática.' : '',
                 ].filter(Boolean),
               }}>
-                <div className={cn('p-4 rounded-xl border transition-all cursor-default', sev.border, sev.bg + '/30')}>
+                <div className={cn('p-4 rounded-xl border transition-all duration-300 cursor-default geo-shadow', sev.border, sev.bg + '/20')}>
                   <div className="flex items-start gap-3">
                     <span className={cn('px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 mt-0.5', sev.bg, sev.text)}>
                       {f.severity}

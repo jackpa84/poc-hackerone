@@ -102,7 +102,8 @@ async def get_dashboard(user: User = Depends(get_current_user)):
 
     findings_facet = findings_data[0] if findings_data else {}
 
-    finding_totals = findings_facet.get("totals", [{}])[0].get("total", 0)
+    totals_list = findings_facet.get("totals", [])
+    finding_totals = totals_list[0].get("total", 0) if totals_list else 0
 
     by_severity = {
         item["_id"]: item["count"]

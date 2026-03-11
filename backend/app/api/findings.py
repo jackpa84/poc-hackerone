@@ -52,7 +52,14 @@ async def findings_stats(user: User = Depends(get_current_user)):
 
 @router.post("", response_model=FindingResponse, status_code=201)
 async def create_finding(data: FindingCreate, user: User = Depends(get_current_user)):
-    finding = Finding(user_id=str(user.id), **data.model_dump())
+    payload = data.model_dump()
+    if payload.get("cvss_score") is not None:
+        if not (0.0 <= payload["cvss_score"] <= 10.0):
+            raise HTTPException(status_code=422, detail="cvss_score deve estar entre 0.0 e 10.0")
+    valid_severities = ("critical", "high", "medium", "low", "informational")
+    if payload.get("severity") and payload["severity"] not in valid_severities:
+        raise HTTPException(status_code=422, detail=f"severity deve ser um de: {valid_severities}")
+    finding = Finding(user_id=str(user.id), **payload)
     await finding.insert()
     return to_response(finding)
 
@@ -73,6 +80,9 @@ async def update_finding(finding_id: str, data: FindingUpdate, user: User = Depe
     if not f or f.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
     update = data.model_dump(exclude_none=True)
+    if "cvss_score" in update and update["cvss_score"] is not None:
+        if not (0.0 <= update["cvss_score"] <= 10.0):
+            raise HTTPException(status_code=422, detail="cvss_score deve estar entre 0.0 e 10.0")
     update["updated_at"] = datetime.utcnow()
     await f.set(update)
     return to_response(f)

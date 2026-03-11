@@ -4,6 +4,7 @@ config.py — Configurações globais da aplicação
 Pydantic-settings lê automaticamente do arquivo .env ou variáveis de ambiente.
 Acesse em qualquer lugar com: from app.config import settings
 """
+import warnings
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     JWT_EXPIRY_HOURS: int = 24
 
     # Claude (Anthropic) — fallback se Ollama não estiver disponível
-    ANTHROPIC_API_KEY: str = "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"
+    ANTHROPIC_API_KEY: str = ""
 
     # Ollama — modelo local (prioridade sobre Claude)
     OLLAMA_URL: str = "http://host.docker.internal:11434"
@@ -38,6 +39,21 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    def validate_security(self) -> None:
+        """Emite avisos para configurações inseguras."""
+        weak_jwt = "dev-secret-change-in-production"
+        if self.JWT_SECRET == weak_jwt or len(self.JWT_SECRET) < 32:
+            warnings.warn(
+                "[SECURITY] JWT_SECRET fraco ou padrão! Defina um segredo forte (≥32 chars) no .env",
+                stacklevel=2,
+            )
+        if not self.ANTHROPIC_API_KEY:
+            warnings.warn(
+                "[CONFIG] ANTHROPIC_API_KEY não configurada. Geração de relatórios com IA estará indisponível.",
+                stacklevel=2,
+            )
+
 
 # Instância única importada por todo o projeto
 settings = Settings()
+settings.validate_security()

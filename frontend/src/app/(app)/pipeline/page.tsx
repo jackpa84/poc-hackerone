@@ -6,6 +6,7 @@ import {
   CheckCircle2, Clock, Loader2, XCircle, Globe, Bug,
   FileText, Shield, AlertCircle, ExternalLink,
 } from 'lucide-react'
+import { SkeletonCard, SkeletonKPI } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import type { Finding } from '@/types/api'
@@ -19,6 +20,8 @@ interface PipelineJob {
   status: 'pending' | 'running' | 'completed' | 'failed'
   result_summary: {
     score?: number
+    review_score?: number
+    review_approved?: boolean
     submitted?: boolean
     h1_report_id?: string
     reason?: string
@@ -117,8 +120,22 @@ export default function PipelinePage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw size={20} className="animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-violet-500/10 animate-pulse">
+            <SendHorizonal size={18} className="text-violet-600" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-5 w-40 rounded bg-muted/60 animate-pulse" />
+            <div className="h-3 w-64 rounded bg-muted/40 animate-pulse" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonKPI key={i} />)}
+        </div>
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
       </div>
     )
   }
@@ -134,7 +151,7 @@ export default function PipelinePage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold">Pipeline Automático</h1>
-            <p className="text-sm text-muted-foreground">H1 Sync → Recon → Finding → Relatório IA → Submissão</p>
+            <p className="text-sm text-muted-foreground">H1 Sync → Recon → Finding → Relatório IA → <span className="text-violet-400">Revisão IA</span> → Submissão</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -175,10 +192,10 @@ export default function PipelinePage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Findings aceitos" value={accepted.length} color="text-blue-400" bg="bg-blue-500/10" />
-        <StatCard label="Em execução" value={inProgress} color="text-yellow-400" bg="bg-yellow-500/10" pulse={inProgress > 0} />
-        <StatCard label="Submetidos H1" value={submitted} color="text-emerald-400" bg="bg-emerald-500/10" />
-        <StatCard label="Com erro" value={failed} color="text-red-400" bg="bg-red-500/10" />
+        <StatCard label="Findings aceitos" value={accepted.length} color="text-blue-400" bg="bg-blue-500/10" hovColor="hov-cyan" />
+        <StatCard label="Em execução" value={inProgress} color="text-yellow-400" bg="bg-yellow-500/10" pulse={inProgress > 0} hovColor="hov-yellow" />
+        <StatCard label="Submetidos H1" value={submitted} color="text-emerald-400" bg="bg-emerald-500/10" hovColor="hov-emerald" />
+        <StatCard label="Com erro" value={failed} color="text-red-400" bg="bg-red-500/10" hovColor="hov-red" />
       </div>
 
       {/* Findings table */}
@@ -223,6 +240,16 @@ export default function PipelinePage() {
                 <span className="flex-1 text-muted-foreground truncate">
                   {j.logs[j.logs.length - 1] ?? 'Aguardando...'}
                 </span>
+                {j.result_summary?.review_score != null && (
+                  <span className={cn(
+                    'shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border',
+                    j.result_summary.review_approved
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                      : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/25'
+                  )}>
+                    Rev {j.result_summary.review_score}/100
+                  </span>
+                )}
                 {j.result_summary?.score != null && (
                   <span className={cn(
                     'shrink-0 font-semibold',
@@ -407,11 +434,11 @@ function JobStatusIcon({ status, withLabel }: { status: string; withLabel?: bool
   )
 }
 
-function StatCard({ label, value, color, bg, pulse }: {
-  label: string; value: number; color: string; bg: string; pulse?: boolean
+function StatCard({ label, value, color, bg, pulse, hovColor }: {
+  label: string; value: number; color: string; bg: string; pulse?: boolean; hovColor?: string
 }) {
   return (
-    <div className="p-3.5 rounded-xl bg-card border border-border">
+    <div className={cn('p-3.5 rounded-xl bg-card border border-border geo-shadow', hovColor)}>
       <p className={cn('text-2xl font-bold', color, pulse && value > 0 && 'animate-pulse')}>{value}</p>
       <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
     </div>

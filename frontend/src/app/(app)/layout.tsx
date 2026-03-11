@@ -6,8 +6,8 @@ import { RealtimeStatusBar } from '@/components/layout/RealtimeStatusBar'
 import api from '@/lib/api'
 
 const DEV_EMAIL    = 'admin@example.com'
-const DEV_PASSWORD = 'admin1234'
-const DEV_USERNAME = 'admin'
+const DEV_PASSWORD = 'bugbounty2026'
+const DEV_USERNAME = 'jackson'
 
 async function ensureToken() {
   if (typeof window === 'undefined') return

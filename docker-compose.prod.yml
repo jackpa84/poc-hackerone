@@ -1,0 +1,56 @@
+# docker-compose.prod.yml — Overrides de produção
+# Uso: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Diferenças em relação ao ambiente de dev:
+#   - Backend sem --reload (modo produção com múltiplos workers Uvicorn)
+#   - Volumes de código-fonte removidos (usa imagem buildada)
+#   - Portas internas do MongoDB e Redis NÃO expostas ao host
+#   - Limites de memória ajustados
+#   - Logging estruturado ativado
+
+services:
+
+  mongodb:
+    ports: []   # Remove exposição direta ao host em produção
+
+  redis:
+    ports: []   # Remove exposição direta ao host em produção
+
+  backend:
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers 4
+        --log-level info
+        --access-log
+        --proxy-headers
+        --forwarded-allow-ips "*"
+    volumes:
+      # Remove hot-reload de código — usa imagem buildada
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nuclei_templates:/root/.local
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "2.0"
+
+  worker:
+    restart: unless-stopped   # Mais robusto que on-failure em prod
+    volumes:
+      # Remove hot-reload de código — usa imagem buildada
+      - nuclei_templates:/root/.local
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          memory: 2048M
+          cpus: "2.0"
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          memory: 512M    # Aumentado de 256M (Next.js precisa de mais em prod)
+          cpus: "1.0"

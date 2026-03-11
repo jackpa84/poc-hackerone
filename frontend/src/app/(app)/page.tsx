@@ -9,6 +9,7 @@ import {
   BrainCircuit, Radio, Terminal, X, Send, FileText, Loader2,
   Globe2, Network, Key, Search, Link2, Layers, TrendingUp, Briefcase,
 } from 'lucide-react'
+import { SkeletonCard, SkeletonKPI, Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import { useRealtimeContext } from '@/contexts/RealtimeContext'
@@ -822,8 +823,35 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw size={20} className="animate-spin text-muted-foreground" />
+      <div className="space-y-7">
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-3 w-72" />
+          </div>
+          <Skeleton className="h-8 w-8 rounded-lg" />
+        </div>
+        {/* KPI cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonKPI key={i} />)}
+        </div>
+        {/* Severity boxes */}
+        <div className="grid grid-cols-5 gap-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-14 rounded-xl border border-border animate-pulse bg-muted/40" />
+          ))}
+        </div>
+        {/* Two columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-28 mb-3" />
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-24 mb-3" />
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        </div>
       </div>
     )
   }
@@ -854,7 +882,7 @@ export default function DashboardPage() {
             label: 'Total Bugs',
             value: data?.total_findings ?? 0,
             href: '/findings',
-            accent: 'hover:border-red-500/30',
+            hovColor: 'hov-red',
           },
           {
             type: 'bounty' as const,
@@ -862,7 +890,7 @@ export default function DashboardPage() {
             bg: 'bg-emerald-500/10',
             label: 'Bounty Ganho',
             value: `$${(data?.bounty_earned ?? 0).toLocaleString()}`,
-            accent: 'hover:border-emerald-500/30',
+            hovColor: 'hov-emerald',
           },
           {
             type: 'targets' as const,
@@ -870,7 +898,7 @@ export default function DashboardPage() {
             bg: 'bg-blue-500/10',
             label: 'Targets In-Scope',
             value: data?.targets_in_scope ?? 0,
-            accent: 'hover:border-blue-500/30',
+            hovColor: 'hov-cyan',
           },
           {
             type: 'jobs' as const,
@@ -880,7 +908,7 @@ export default function DashboardPage() {
             value: data?.active_jobs ?? 0,
             href: '/jobs',
             pulse: !!(data?.active_jobs),
-            accent: 'hover:border-yellow-500/30',
+            hovColor: 'hov-yellow',
           },
           {
             type: 'ready' as const,
@@ -889,11 +917,11 @@ export default function DashboardPage() {
             label: 'Prontos p/ Report',
             value: data?.ready_to_report?.length ?? 0,
             href: '/pipeline',
-            accent: 'hover:border-violet-500/30',
+            hovColor: 'hov-violet',
           },
         ].map(card => (
           <Tooltip key={card.type} content={getKpiTooltip(card.type, data)}>
-            <KpiCard {...card} />
+            <KpiCard {...card} accent={undefined} />
           </Tooltip>
         ))}
       </div>
@@ -1047,8 +1075,8 @@ export default function DashboardPage() {
         </Tooltip>
       </div>
 
-      {/* ── AI Report Log + Service Console ────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* ── AI Report Log ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-4">
 
         {/* AI Report Log */}
         <Tooltip content={{
@@ -1133,11 +1161,8 @@ export default function DashboardPage() {
           </div>
         </Tooltip>
 
-        {/* Container Logs */}
-        <ContainerLogs />
-
       </div>
-      {/* ── fim AI + Console ─────────────────────────────────────────────── */}
+      {/* ── fim AI Log ───────────────────────────────────────────────────── */}
 
       {/* ── Análise da IA + Log do Sistema ───────────────────────────────── */}
       <AiAnalysisPanel
@@ -1516,6 +1541,24 @@ const CAT_COLOR: Record<string, string> = {
   PIPELINE: 'text-violet-500',
   JOB:      'text-blue-500',
   SYSTEM:   'text-emerald-500',
+  QUEUE:    'text-zinc-500',
+}
+
+const SVC_CFG: Record<string, { label: string; color: string; lvlColor: Record<string, string> }> = {
+  backend:  { label: 'API',    color: 'text-blue-400',   lvlColor: { error: 'text-red-400', warn: 'text-yellow-400', info: 'text-blue-300',   debug: 'text-zinc-500', stdout: 'text-zinc-300' } },
+  worker:   { label: 'WORKER', color: 'text-violet-400', lvlColor: { error: 'text-red-400', warn: 'text-yellow-400', info: 'text-violet-300', debug: 'text-zinc-500', stdout: 'text-zinc-300' } },
+  frontend: { label: 'NEXT',   color: 'text-cyan-400',   lvlColor: { error: 'text-red-400', warn: 'text-yellow-400', info: 'text-cyan-300',   debug: 'text-zinc-500', stdout: 'text-zinc-300' } },
+  mongodb:  { label: 'MONGO',  color: 'text-green-400',  lvlColor: { error: 'text-red-400', warn: 'text-yellow-400', info: 'text-green-300',  debug: 'text-zinc-500', stdout: 'text-zinc-300' } },
+  redis:    { label: 'REDIS',  color: 'text-orange-400', lvlColor: { error: 'text-red-400', warn: 'text-yellow-400', info: 'text-orange-300', debug: 'text-zinc-500', stdout: 'text-zinc-300' } },
+}
+
+interface ContainerLine {
+  key: string
+  tsMs: number
+  tsLabel: string
+  service: string
+  level: string
+  message: string
 }
 
 function SystemActivityLog({
@@ -1527,29 +1570,58 @@ function SystemActivityLog({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
-  const [workerLines, setWorkerLines] = useState<{ ts: string; msg: string; level: string }[]>([])
-  const loadWorkerLogs = useCallback(async () => {
+  const [svcFilter, setSvcFilter] = useState<string | null>(null)
+  const [containerLines, setContainerLines] = useState<ContainerLine[]>([])
+  const [loadingLogs, setLoadingLogs] = useState(false)
+
+  const loadAllLogs = useCallback(async () => {
+    setLoadingLogs(true)
     try {
-      const { data } = await api.get('/logs/services/worker', { params: { tail: 50 } })
-      setWorkerLines(data.lines ?? [])
+      const services = ['backend', 'worker', 'frontend', 'mongodb', 'redis']
+      const results = await Promise.allSettled(
+        services.map(svc => api.get(`/logs/services/${svc}`, { params: { tail: 80 } }))
+      )
+      const merged: ContainerLine[] = []
+      results.forEach((res, idx) => {
+        if (res.status !== 'fulfilled') return
+        const svc = services[idx]
+        ;(res.value.data.lines ?? []).forEach((l: LogLine, i: number) => {
+          const tsMs = l.timestamp ? new Date(l.timestamp).getTime() : 0
+          merged.push({
+            key: `${svc}-${i}-${tsMs}`,
+            tsMs,
+            tsLabel: l.timestamp
+              ? new Date(l.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              : '',
+            service: svc,
+            level: l.level,
+            message: l.message,
+          })
+        })
+      })
+      merged.sort((a, b) => a.tsMs - b.tsMs)
+      setContainerLines(merged)
     } catch {}
+    finally { setLoadingLogs(false) }
   }, [])
 
-  useEffect(() => { loadWorkerLogs() }, [loadWorkerLogs])
+  useEffect(() => { loadAllLogs() }, [loadAllLogs])
   useEffect(() => {
-    const t = setInterval(loadWorkerLogs, 6000)
+    const t = setInterval(loadAllLogs, 8000)
     return () => clearInterval(t)
-  }, [loadWorkerLogs])
+  }, [loadAllLogs])
 
   const sseEntries = buildSystemLog(rt, recentJobs)
 
+  const visibleLines = svcFilter
+    ? containerLines.filter(l => l.service === svcFilter)
+    : containerLines
+
+  const totalLines = visibleLines.length + (svcFilter ? 0 : sseEntries.length)
+
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [sseEntries.length, workerLines.length, autoScroll])
-
-  const WLVL: Record<string, string> = {
-    error: 'text-red-400', warn: 'text-yellow-400', info: 'text-blue-400', debug: 'text-zinc-600',
-  }
+  }, [totalLines, autoScroll])
 
   return (
     <div className="rounded-xl border border-border overflow-hidden">
@@ -1569,11 +1641,10 @@ function SystemActivityLog({
             <Radio size={9} className={rt.connected ? 'animate-pulse' : ''} />
             {rt.connected ? 'live' : 'offline'}
           </div>
+          {loadingLogs && <RefreshCw size={9} className="animate-spin text-zinc-600" />}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {sseEntries.length + workerLines.length} entradas
-          </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground font-mono">{totalLines} linhas</span>
           <button
             onClick={() => setAutoScroll(v => !v)}
             className={cn(
@@ -1589,37 +1660,81 @@ function SystemActivityLog({
         </div>
       </div>
 
-      {/* Terminal body */}
-      <div className="h-96 overflow-y-auto bg-zinc-950 p-4 font-mono text-[11px] space-y-0.5">
-
-        {/* Worker real logs */}
-        {workerLines.slice().reverse().map((line, i) => {
-          const lvl = line.level as string
+      {/* Service filter pills */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-zinc-950/80 overflow-x-auto">
+        <button
+          onClick={() => setSvcFilter(null)}
+          className={cn(
+            'px-2.5 py-1 rounded text-[10px] font-mono font-semibold transition-colors shrink-0',
+            svcFilter === null
+              ? 'bg-zinc-700 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300'
+          )}
+        >
+          ALL
+        </button>
+        {Object.entries(SVC_CFG).map(([key, cfg]) => {
+          const count = containerLines.filter(l => l.service === key).length
           return (
-            <div key={`wl-${i}`} className="flex gap-3 leading-relaxed opacity-70">
-              <span className="text-zinc-700 shrink-0 select-none tabular-nums w-[72px]">
-                {line.ts ? new Date(line.ts).toLocaleTimeString('pt-BR') : ''}
+            <button
+              key={key}
+              onClick={() => setSvcFilter(svcFilter === key ? null : key)}
+              className={cn(
+                'flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-mono font-semibold transition-colors shrink-0',
+                svcFilter === key
+                  ? cn('bg-zinc-800', cfg.color)
+                  : 'text-zinc-600 hover:text-zinc-400'
+              )}
+            >
+              <span>{cfg.label}</span>
+              <span className="text-zinc-700">{count}</span>
+            </button>
+          )
+        })}
+        <div className="ml-auto shrink-0">
+          <button
+            onClick={loadAllLogs}
+            className="p-1 rounded hover:bg-zinc-800 transition-colors"
+            title="Atualizar logs"
+          >
+            <RefreshCw size={10} className="text-zinc-600 hover:text-zinc-400" />
+          </button>
+        </div>
+      </div>
+
+      {/* Terminal body */}
+      <div className="h-[520px] overflow-y-auto bg-zinc-950 px-4 py-3 font-mono text-[11px] space-y-0.5">
+
+        {/* Container logs (sorted by time) */}
+        {visibleLines.map(line => {
+          const cfg = SVC_CFG[line.service]
+          const msgColor = cfg?.lvlColor[line.level] ?? 'text-zinc-400'
+          return (
+            <div key={line.key} className="flex gap-2 leading-relaxed min-w-0">
+              <span className="text-zinc-700 shrink-0 select-none tabular-nums w-[60px]">
+                {line.tsLabel}
               </span>
-              <span className="text-zinc-600 shrink-0 w-16">[WORKER]</span>
-              <span className={cn('break-all', WLVL[lvl] ?? 'text-zinc-500')}>{line.msg}</span>
+              <span className={cn('shrink-0 w-[52px] font-semibold', cfg?.color ?? 'text-zinc-500')}>
+                [{cfg?.label ?? line.service}]
+              </span>
+              <span className={cn('break-all flex-1 min-w-0', msgColor)}>
+                {line.message}
+              </span>
             </div>
           )
         })}
 
-        {/* SSE events — more prominent */}
-        {sseEntries.map(entry => {
+        {/* SSE events (only when not filtered by service) */}
+        {!svcFilter && sseEntries.map(entry => {
           const lvl = LEVEL_CONFIG[entry.level] ?? LEVEL_CONFIG.debug
           const catColor = CAT_COLOR[entry.category] ?? 'text-zinc-500'
           return (
-            <div key={entry.id} className="flex gap-3 leading-relaxed">
-              <span className="text-zinc-600 shrink-0 select-none tabular-nums w-[72px]">
+            <div key={entry.id} className="flex gap-2 leading-relaxed border-l-2 border-emerald-500/20 pl-2 ml-1">
+              <span className="text-zinc-600 shrink-0 select-none tabular-nums w-[60px]">
                 {new Date(entry.ts).toLocaleTimeString('pt-BR')}
               </span>
-              <span className={cn('shrink-0 w-16 font-semibold', catColor)}>
+              <span className={cn('shrink-0 w-[52px] font-semibold', catColor)}>
                 [{entry.category}]
-              </span>
-              <span className={cn('font-semibold shrink-0 w-16', lvl.color)}>
-                {lvl.prefix.trim()}
               </span>
               <span className={cn('break-all flex-1', lvl.color === 'text-zinc-500' ? 'text-zinc-400' : lvl.color)}>
                 {entry.message}
@@ -1628,8 +1743,8 @@ function SystemActivityLog({
           )
         })}
 
-        {sseEntries.length === 0 && workerLines.length === 0 && (
-          <p className="text-zinc-700 italic">Aguardando atividade do sistema...</p>
+        {totalLines === 0 && (
+          <p className="text-zinc-700 italic">Aguardando logs...</p>
         )}
 
         <div ref={bottomRef} />
@@ -1976,7 +2091,7 @@ function H1SubmissionRow({ findings, aiReports }: { findings: FindingItem[]; aiR
 // ── KPI Card ───────────────────────────────────────────────────────────────
 
 function KpiCard({
-  icon, bg, label, value, href, pulse, accent
+  icon, bg, label, value, href, pulse, accent, hovColor
 }: {
   icon: React.ReactNode
   bg: string
@@ -1985,11 +2100,12 @@ function KpiCard({
   href?: string
   pulse?: boolean
   accent?: string
+  hovColor?: string
 }) {
   const inner = (
     <div className={cn(
-      'p-4 rounded-xl bg-card border border-border transition-all h-full cursor-default',
-      accent ?? 'hover:border-border/60'
+      'p-4 rounded-xl bg-card border border-border transition-all duration-300 h-full cursor-default geo-shadow',
+      hovColor ?? ''
     )}>
       <div className="flex items-start justify-between mb-3">
         <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', bg)}>

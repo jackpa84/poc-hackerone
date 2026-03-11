@@ -4,20 +4,24 @@ workers/pipeline.py — Pipeline de automação
 Orquestra o fluxo de um finding:
   1. Carrega o finding
   2. Gera relatório com IA (Claude/Ollama)
-  3. Avalia o score de prontidão (checklist de 9 critérios)
+  3. Revisão automática da IA (checa formato HackerOne, qualidade do texto)
+  4. Avalia o score de prontidão (checklist de 9 critérios)
 
 Pode ser disparado:
   - Manualmente via POST /api/pipeline/run
   - Em lote via POST /api/pipeline/run-all (para todos os findings "accepted")
 """
+import logging
 from datetime import datetime
 from bson import ObjectId
 
 from app.models.finding import Finding
 from app.models.report import Report
 from app.models.job import Job
-from app.services.ai_reporter import generate_report
+from app.services.ai_reporter import generate_report, review_report
 from app.services import events as ev
+
+logger = logging.getLogger(__name__)
 
 
 async def _update_job(job: Job, log: str, status: str | None = None):
@@ -90,7 +94,47 @@ async def task_auto_pipeline(ctx, job_id: str):
             await job.save()
             return
 
-    # ── Passo 3: Avaliar prontidão ────────────────────────────────────────
+    # ── Passo 3: Revisão de qualidade pela IA ─────────────────────────────
+    await _update_job(job, "Revisando qualidade e formato do relatório com IA...")
+    review = None
+    try:
+        review = await review_report(
+            report.content_markdown,
+            finding.title,
+            finding.severity,
+        )
+        review_dict = review.to_dict()
+
+        # Salva resultado da revisão no report
+        await report.set({
+            "review_notes": review_dict,
+            "review_score": review.quality_score,
+            "review_approved": review.approved,
+            "is_ready": review.approved,
+        })
+
+        review_log = (
+            f"Revisão concluída: score={review.quality_score}/100 | "
+            f"aprovado={review.approved} | {review.summary}"
+        )
+        await _update_job(job, review_log)
+
+        if review.missing_sections:
+            await _update_job(job, f"Seções faltando: {', '.join(review.missing_sections)}")
+        if review.issues:
+            for issue in review.issues[:3]:
+                await _update_job(job, f"  ⚠ {issue}")
+
+        await ev.pipeline_step(
+            job.user_id, job_id, "review_done",
+            f"Revisão: {review.quality_score}/100 — {review.summary}",
+            score=review.quality_score,
+        )
+    except Exception as e:
+        logger.warning("[pipeline] Revisão falhou para job=%s: %s", job_id, e)
+        await _update_job(job, f"Revisão indisponível — continuando sem revisão: {e}")
+
+    # ── Passo 4: Avaliar prontidão ────────────────────────────────────────
     await _update_job(job, "Avaliando prontidão do finding...")
 
     checks_passed = 0
@@ -111,7 +155,11 @@ async def task_auto_pipeline(ctx, job_id: str):
     await ev.pipeline_step(job.user_id, job_id, "readiness", f"Score: {score}%", score=score)
 
     # ── Finalizar ─────────────────────────────────────────────────────────
-    job.result_summary = {"score": score}
+    job.result_summary = {
+        "score": score,
+        "review_score": review.quality_score if review else None,
+        "review_approved": review.approved if review else None,
+    }
     job.status = "completed"
     job.finished_at = datetime.utcnow()
     await _update_job(job, f"Pipeline concluído com score {score}%", "completed")

@@ -69,10 +69,48 @@ RUN set -e; \
     && unzip -q /tmp/katana.zip -d /tmp/katana \
     && mv /tmp/katana/katana /usr/local/bin/ \
     && rm -rf /tmp/katana.zip /tmp/katana \
-    && echo "✓ katana"
+    && echo "✓ katana"; \
+    \
+    # dalfox — scanner XSS #1 da comunidade bug bounty
+    wget -q "https://github.com/hahwul/dalfox/releases/download/v2.9.2/dalfox_linux_${GOARCH}.tar.gz" \
+        -O /tmp/dalfox.tar.gz \
+    && tar xzf /tmp/dalfox.tar.gz -C /tmp \
+    && mv /tmp/dalfox /usr/local/bin/ \
+    && rm /tmp/dalfox.tar.gz \
+    && echo "✓ dalfox"; \
+    \
+    # gitleaks — detector de secrets em repositórios Git
+    wget -q "https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_${GOARCH}.tar.gz" \
+        -O /tmp/gitleaks.tar.gz \
+    && tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks \
+    && mv /tmp/gitleaks /usr/local/bin/ \
+    && rm /tmp/gitleaks.tar.gz \
+    && echo "✓ gitleaks"; \
+    \
+    # kiterunner — descoberta de rotas de API REST contextual
+    wget -q "https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_${GOARCH}.tar.gz" \
+        -O /tmp/kiterunner.tar.gz \
+    && tar xzf /tmp/kiterunner.tar.gz -C /tmp \
+    && mv /tmp/kr /usr/local/bin/ \
+    && rm /tmp/kiterunner.tar.gz \
+    && echo "✓ kiterunner"
+
+# Kiterunner wordlists (routes-small.kite)
+RUN mkdir -p /usr/local/share/kiterunner \
+    && wget -q "https://wordlists-cdn.assetnote.io/data/kiterunner/routes-small.kite" \
+        -O /usr/local/share/kiterunner/routes-small.kite 2>/dev/null \
+    || echo "⚠ kiterunner wordlist não disponível (opcional)"
+
+# SQLMap — scanner de SQL Injection (Python)
+RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /usr/local/bin/sqlmap \
+    && echo "✓ sqlmap"
+
+# Arjun — descoberta de parâmetros HTTP (Python via pip)
+# LinkFinder + SecretFinder — análise de JavaScript
+RUN pip install --no-cache-dir arjun
 
 # Sobrescreve httpx do pip pela versão CLI do Go (renomeia para evitar conflito)
-# Workers usam "httpx" para se referir ao CLI do Go
+# Workers usam "httpx-go" para se referir ao CLI do Go
 RUN ln -sf /usr/local/bin/httpx-cli /usr/local/bin/httpx-go
 
 # Instala dependências Python

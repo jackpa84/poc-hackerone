@@ -3,37 +3,37 @@
 @tailwind utilities;
 
 /*
-  Tema dark neutro — zinc/slate base, laranja como cor primária (H1)
+  Tema Dark — fundo preto puro, acentos neon coloridos
 */
 @layer base {
   :root {
-    --background:          262 20% 7%;       /* roxo-escuro profundo */
+    --background:          0 0% 3%;          /* preto puro */
     --foreground:          0 0% 93%;
 
-    --card:                262 15% 11%;      /* card levemente roxo, mais claro que o fundo */
+    --card:                0 0% 6%;          /* card preto elevado */
     --card-foreground:     0 0% 93%;
 
-    --popover:             262 15% 11%;
+    --popover:             0 0% 6%;
     --popover-foreground:  0 0% 93%;
 
-    --primary:             24 94% 50%;       /* laranja #f97316 */
+    --primary:             24 94% 53%;       /* laranja neon */
     --primary-foreground:  0 0% 100%;
 
-    --secondary:           262 12% 15%;
+    --secondary:           0 0% 9%;
     --secondary-foreground: 0 0% 92%;
 
-    --muted:               262 12% 15%;
-    --muted-foreground:    262 8% 55%;
+    --muted:               0 0% 9%;
+    --muted-foreground:    0 0% 45%;
 
-    --accent:              262 14% 18%;
+    --accent:              0 0% 12%;
     --accent-foreground:   0 0% 92%;
 
-    --destructive:         0 63% 31%;
+    --destructive:         0 70% 45%;
     --destructive-foreground: 0 0% 98%;
 
-    --border:              262 12% 18%;
-    --input:               262 12% 18%;
-    --ring:                24 94% 50%;
+    --border:              0 0% 12%;
+    --input:               0 0% 12%;
+    --ring:                24 94% 53%;
 
     --radius:              0.5rem;
   }
@@ -48,40 +48,114 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  ::-webkit-scrollbar        { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track  { @apply bg-background; }
-  ::-webkit-scrollbar-thumb  { @apply bg-accent rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground; }
+  ::-webkit-scrollbar        { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track  { background: #050505; }
+  ::-webkit-scrollbar-thumb  { background: #1a1a1a; border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
 }
 
 @layer components {
-  .badge-critical { @apply bg-red-500/15 text-red-400 border border-red-500/30; }
-  .badge-high     { @apply bg-orange-500/15 text-orange-400 border border-orange-500/30; }
-  .badge-medium   { @apply bg-yellow-500/15 text-yellow-400 border border-yellow-500/30; }
-  .badge-low      { @apply bg-zinc-500/15 text-zinc-400 border border-zinc-500/30; }
-  .badge-info     { @apply bg-zinc-500/15 text-zinc-400 border border-zinc-500/30; }
+  /* ── Severity badges ───────────────────────────────────────── */
+  .badge-critical { @apply bg-red-500/10 text-red-400 border border-red-500/25; }
+  .badge-high     { @apply bg-orange-500/10 text-orange-400 border border-orange-500/25; }
+  .badge-medium   { @apply bg-yellow-500/10 text-yellow-400 border border-yellow-500/25; }
+  .badge-low      { @apply bg-blue-500/10 text-blue-400 border border-blue-500/25; }
+  .badge-info     { @apply bg-zinc-500/10 text-zinc-400 border border-zinc-500/25; }
 
-  /* Sombra geométrica no hover — efeito 3D deslocado */
+  /* ── Card hover colorido — aplique uma classe a cada card ─── */
+
+  /* Base da geo-shadow */
   .geo-shadow {
     @apply relative transition-all duration-300 ease-out;
+    border: 1px solid rgba(255,255,255,0.06);
   }
   .geo-shadow::after {
     content: '';
-    @apply absolute inset-0 rounded-xl border border-primary/0 -z-10;
-    transform: translate(0, 0);
-    background: hsl(24 94% 50% / 0);
+    @apply absolute inset-0 rounded-xl -z-10;
     transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
+
+  /* Hover padrão (laranja) */
   .geo-shadow:hover {
-    transform: translate(-3px, -3px);
+    transform: translate(-2px, -2px);
+    border-color: rgba(249, 115, 22, 0.35);
+    box-shadow: 0 0 20px rgba(249, 115, 22, 0.12), 0 8px 32px rgba(0,0,0,0.4);
+    background-color: rgba(249, 115, 22, 0.05);
   }
   .geo-shadow:hover::after {
-    transform: translate(6px, 6px);
-    background: hsl(24 94% 50% / 0.08);
-    border-color: hsl(24 94% 50% / 0.25);
+    transform: translate(4px, 4px);
+    background: rgba(249, 115, 22, 0.06);
+    border: 1px solid rgba(249, 115, 22, 0.2);
+    border-radius: inherit;
   }
 
-  /* Plano de fundo geométrico */
+  /* Cyan */
+  .hov-cyan:hover {
+    border-color: rgba(6, 182, 212, 0.4) !important;
+    box-shadow: 0 0 24px rgba(6, 182, 212, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(6, 182, 212, 0.06) !important;
+  }
+  .hov-cyan:hover::after {
+    background: rgba(6, 182, 212, 0.07) !important;
+    border-color: rgba(6, 182, 212, 0.2) !important;
+  }
+
+  /* Violet */
+  .hov-violet:hover {
+    border-color: rgba(139, 92, 246, 0.4) !important;
+    box-shadow: 0 0 24px rgba(139, 92, 246, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(139, 92, 246, 0.06) !important;
+  }
+  .hov-violet:hover::after {
+    background: rgba(139, 92, 246, 0.07) !important;
+    border-color: rgba(139, 92, 246, 0.2) !important;
+  }
+
+  /* Emerald */
+  .hov-emerald:hover {
+    border-color: rgba(16, 185, 129, 0.4) !important;
+    box-shadow: 0 0 24px rgba(16, 185, 129, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(16, 185, 129, 0.06) !important;
+  }
+  .hov-emerald:hover::after {
+    background: rgba(16, 185, 129, 0.07) !important;
+    border-color: rgba(16, 185, 129, 0.2) !important;
+  }
+
+  /* Pink */
+  .hov-pink:hover {
+    border-color: rgba(236, 72, 153, 0.4) !important;
+    box-shadow: 0 0 24px rgba(236, 72, 153, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(236, 72, 153, 0.06) !important;
+  }
+  .hov-pink:hover::after {
+    background: rgba(236, 72, 153, 0.07) !important;
+    border-color: rgba(236, 72, 153, 0.2) !important;
+  }
+
+  /* Yellow */
+  .hov-yellow:hover {
+    border-color: rgba(234, 179, 8, 0.4) !important;
+    box-shadow: 0 0 24px rgba(234, 179, 8, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(234, 179, 8, 0.06) !important;
+  }
+  .hov-yellow:hover::after {
+    background: rgba(234, 179, 8, 0.07) !important;
+    border-color: rgba(234, 179, 8, 0.2) !important;
+  }
+
+  /* Red */
+  .hov-red:hover {
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    box-shadow: 0 0 24px rgba(239, 68, 68, 0.15), 0 8px 32px rgba(0,0,0,0.5) !important;
+    background-color: rgba(239, 68, 68, 0.06) !important;
+  }
+  .hov-red:hover::after {
+    background: rgba(239, 68, 68, 0.07) !important;
+    border-color: rgba(239, 68, 68, 0.2) !important;
+  }
+
+  /* ── Plano de fundo geométrico ─────────────────────────────── */
   .geo-bg {
     position: relative;
     overflow: hidden;
@@ -93,16 +167,12 @@
     pointer-events: none;
     z-index: 0;
     background:
-      /* Grade de pontos */
-      radial-gradient(circle at center, hsl(24 94% 50% / 0.03) 1px, transparent 1px),
-      /* Gradiente diagonal laranja sutil */
-      linear-gradient(135deg, hsl(24 94% 50% / 0.04) 0%, transparent 50%, hsl(24 94% 50% / 0.02) 100%),
-      /* Gradiente canto superior direito */
-      radial-gradient(ellipse at 85% 5%, hsl(24 94% 50% / 0.06) 0%, transparent 50%),
-      /* Gradiente canto inferior esquerdo */
-      radial-gradient(ellipse at 10% 90%, hsl(24 94% 50% / 0.04) 0%, transparent 45%);
+      radial-gradient(circle at center, rgba(255,255,255,0.012) 1px, transparent 1px),
+      radial-gradient(ellipse at 80% 5%,  rgba(249,115,22,0.05) 0%, transparent 50%),
+      radial-gradient(ellipse at 15% 90%, rgba(139,92,246,0.04) 0%, transparent 45%),
+      radial-gradient(ellipse at 50% 50%, rgba(6,182,212,0.02) 0%, transparent 70%);
     background-size:
-      24px 24px,
+      20px 20px,
       100% 100%,
       100% 100%,
       100% 100%;
@@ -114,31 +184,26 @@
     pointer-events: none;
     z-index: 0;
     background:
-      /* Hexágono grande canto superior direito */
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cpolygon points='400,50 700,200 700,500 400,650 100,500 100,200' fill='none' stroke='%23f97316' stroke-width='0.5' opacity='0.06'/%3E%3Cpolygon points='400,120 640,240 640,460 400,580 160,460 160,240' fill='none' stroke='%23f97316' stroke-width='0.3' opacity='0.04'/%3E%3C/svg%3E") no-repeat calc(100% + 200px) -150px,
-      /* Triângulo inferior esquerdo */
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cpolygon points='0,600 300,0 600,600' fill='none' stroke='%23f97316' stroke-width='0.5' opacity='0.05'/%3E%3Cpolygon points='60,560 300,80 540,560' fill='none' stroke='%23f97316' stroke-width='0.3' opacity='0.03'/%3E%3C/svg%3E") no-repeat -200px calc(100% + 50px),
-      /* Losango central */
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpolygon points='200,10 390,200 200,390 10,200' fill='none' stroke='%23f97316' stroke-width='0.4' opacity='0.035'/%3E%3C/svg%3E") no-repeat 50% 60%,
-      /* Linhas diagonais sutis */
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cline x1='0' y1='100' x2='100' y2='0' stroke='%23f97316' stroke-width='0.2' opacity='0.04'/%3E%3C/svg%3E");
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cpolygon points='400,50 700,200 700,500 400,650 100,500 100,200' fill='none' stroke='%2306b6d4' stroke-width='0.4' opacity='0.04'/%3E%3Cpolygon points='400,120 640,240 640,460 400,580 160,460 160,240' fill='none' stroke='%238b5cf6' stroke-width='0.3' opacity='0.03'/%3E%3C/svg%3E") no-repeat calc(100% + 150px) -120px,
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cpolygon points='0,600 300,0 600,600' fill='none' stroke='%23ec4899' stroke-width='0.4' opacity='0.04'/%3E%3C/svg%3E") no-repeat -180px calc(100% + 50px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpolygon points='200,10 390,200 200,390 10,200' fill='none' stroke='%23f97316' stroke-width='0.4' opacity='0.04'/%3E%3C/svg%3E") no-repeat 50% 60%;
     background-size:
       800px 800px,
       600px 600px,
-      400px 400px,
-      100px 100px;
+      400px 400px;
   }
   .geo-bg > * {
     position: relative;
     z-index: 1;
   }
 
+  /* ── Terminal de logs ──────────────────────────────────────── */
   .logs-terminal {
     scrollbar-width: thin;
-    scrollbar-color: hsl(0 0% 14%) transparent;
+    scrollbar-color: #1a1a1a transparent;
   }
-  .logs-terminal::-webkit-scrollbar       { width: 5px; height: 5px; }
+  .logs-terminal::-webkit-scrollbar       { width: 4px; height: 4px; }
   .logs-terminal::-webkit-scrollbar-track  { background: transparent; }
-  .logs-terminal::-webkit-scrollbar-thumb  { @apply bg-accent/60 rounded-full; }
-  .logs-terminal::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
+  .logs-terminal::-webkit-scrollbar-thumb  { background: #1a1a1a; border-radius: 9999px; }
+  .logs-terminal::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
 }

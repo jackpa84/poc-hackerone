@@ -29,6 +29,8 @@ def to_response(j: Job) -> JobResponse:
 async def list_jobs(
     program_id: str | None = None,
     status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
     user: User = Depends(get_current_user),
 ):
     query = Job.find(Job.user_id == str(user.id))
@@ -36,7 +38,7 @@ async def list_jobs(
         query = query.find(Job.program_id == program_id)
     if status:
         query = query.find(Job.status == status)
-    jobs = await query.sort(-Job.created_at).limit(50).to_list()
+    jobs = await query.sort(-Job.created_at).skip(offset).limit(min(limit, 200)).to_list()
     return [to_response(j) for j in jobs]
 
 
@@ -46,7 +48,11 @@ async def create_job(data: JobCreate, user: User = Depends(get_current_user)):
     Cria o job no banco e o enfileira no Redis.
     Retorna imediatamente — a execução acontece em background.
     """
-    VALID_TYPES = ["recon", "dir_fuzz", "param_fuzz", "sub_fuzz", "idor", "port_scan", "dns_recon"]
+    VALID_TYPES = [
+        "recon", "dir_fuzz", "param_fuzz", "sub_fuzz", "idor",
+        "port_scan", "dns_recon", "xss_scan", "sqli_scan",
+        "param_discovery", "js_analysis", "secret_scan", "api_scan",
+    ]
     if data.type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail=f"Tipo inválido. Use: {VALID_TYPES}")
 
@@ -76,7 +82,7 @@ async def cancel_job(job_id: str, user: User = Depends(get_current_user)):
     if not job or job.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Job não encontrado")
 
-    if job.status in ("completed", "failed"):
+    if job.status in ("completed", "failed", "cancelled"):
         raise HTTPException(status_code=400, detail=f"Job já está {job.status}, não pode ser cancelado")
 
     # Tenta abortar no ARQ se tiver o arq_job_id
@@ -86,9 +92,9 @@ async def cancel_job(job_id: str, user: User = Depends(get_current_user)):
             await redis.abort_job(job.arq_job_id)
             await redis.aclose()
         except Exception:
-            pass  # Mesmo que falhe no ARQ, marcamos como failed no banco
+            pass  # Mesmo que falhe no ARQ, marcamos como cancelled no banco
 
-    job.status = "failed"
+    job.status = "cancelled"
     job.error = "Cancelado pelo usuário"
     job.finished_at = datetime.utcnow()
     job.logs.append("[cancelado] Job cancelado pelo usuário")

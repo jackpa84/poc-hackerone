@@ -10,7 +10,8 @@
 .PHONY: setup build up up-logs down logs restart clean \
         scan scan-now status tools-check \
         logs-api logs-worker logs-frontend \
-        dev-backend dev-worker dev-frontend shell-backend shell-worker
+        dev-backend dev-worker dev-frontend shell-backend shell-worker \
+        prod prod-build prod-down prod-logs
 
 # ── Configuração inicial ──────────────────────────────────────────────────────
 
@@ -160,3 +161,27 @@ redeploy:
 	docker compose build --no-cache backend worker
 	docker compose up -d --force-recreate backend worker
 	@echo "Redeploy concluído. Acompanhe: make logs"
+
+# ── Produção ──────────────────────────────────────────────────────────────────
+
+# Sobe em modo produção (sem hot-reload, portas internas fechadas)
+prod:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+	@echo ""
+	@echo "Produção iniciada:"
+	@echo "  Frontend: http://localhost:3000"
+	@echo "  API:      http://localhost:8000"
+	@echo ""
+	@echo "Acompanhe: make prod-logs"
+
+# Build de produção
+prod-build:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
+
+# Para produção
+prod-down:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+# Logs de produção
+prod-logs:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Briefcase, Plus, ExternalLink, Trash2, RefreshCw, Globe, Info } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { RichTooltip } from '@/components/ui/rich-tooltip'
+import { SkeletonRow } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import type { Program } from '@/types/api'
@@ -85,8 +86,14 @@ export default function ProgramsPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <RefreshCw size={20} className="animate-spin text-muted-foreground" />
+        <div className="rounded-xl border border-border overflow-hidden">
+          <div className="grid grid-cols-[1fr_100px_120px_100px_80px_36px] gap-4 px-4 py-2.5 bg-muted/40 border-b border-border text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+            <span>Programa</span><span>Status</span><span>Bounty Máx</span>
+            <span>Tags</span><span>Adicionado</span><span />
+          </div>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonRow key={i} cols={6} />
+          ))}
         </div>
       ) : programs.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">

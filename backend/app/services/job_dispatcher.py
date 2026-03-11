@@ -21,13 +21,21 @@ from app.models.job import Job
 
 # Mapeamento tipo → nome da função no worker
 JOB_TASK_MAP = {
-    "recon":      "task_run_recon",
-    "dir_fuzz":   "task_run_dir_fuzz",
-    "param_fuzz": "task_run_param_fuzz",
-    "sub_fuzz":   "task_run_sub_fuzz",
-    "idor":       "task_run_idor_test",
-    "port_scan":  "task_run_port_scan",
-    "dns_recon":  "task_run_dns_recon",
+    # Ferramentas base
+    "recon":            "task_run_recon",
+    "dir_fuzz":         "task_run_dir_fuzz",
+    "param_fuzz":       "task_run_param_fuzz",
+    "sub_fuzz":         "task_run_sub_fuzz",
+    "idor":             "task_run_idor_test",
+    "port_scan":        "task_run_port_scan",
+    "dns_recon":        "task_run_dns_recon",
+    # Scanners especializados
+    "xss_scan":         "task_run_xss_scan",
+    "sqli_scan":        "task_run_sqli_scan",
+    "param_discovery":  "task_run_param_discovery",
+    "js_analysis":      "task_run_js_analysis",
+    "secret_scan":      "task_run_secret_scan",
+    "api_scan":         "task_run_api_scan",
 }
 
 
