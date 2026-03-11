@@ -1,0 +1,79 @@
+# Gerado automaticamente por start-m4.sh — não edite manualmente
+# Otimizado para: 12 cores / 24 GB RAM (Apple M4)
+services:
+
+  mongodb:
+    platform: linux/arm64
+    command: >
+      mongod
+        --wiredTigerCacheSizeGB 4
+        --setParameter wiredTigerConcurrentReadTransactions=512
+        --setParameter wiredTigerConcurrentWriteTransactions=256
+        --setParameter diagnosticDataCollectionEnabled=false
+        --setParameter maxTransactionLockRequestTimeoutMillis=5000
+        --setParameter transactionLifetimeLimitSeconds=120
+    deploy:
+      resources:
+        limits:
+          memory: 6144M
+          cpus: "4.0"
+
+  redis:
+    platform: linux/arm64
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 1945mb
+        --maxmemory-policy allkeys-lru
+        --tcp-backlog 1024
+        --hz 100
+        --io-threads 4
+        --io-threads-do-reads yes
+        --lazyfree-lazy-eviction yes
+        --lazyfree-lazy-expire yes
+        --save ""
+    deploy:
+      resources:
+        limits:
+          memory: 1945M
+          cpus: "2.0"
+
+  backend:
+    platform: linux/arm64
+    environment:
+      WEB_CONCURRENCY: "16"
+      PYTHONOPTIMIZE: "2"
+      MALLOC_ARENA_MAX: "2"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1 --workers 1
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
+          cpus: "6.0"
+
+  worker:
+    platform: linux/arm64
+    environment:
+      PYTHONOPTIMIZE: "2"
+      MALLOC_ARENA_MAX: "4"
+    deploy:
+      replicas: 8
+      resources:
+        limits:
+          memory: 4096M
+          cpus: "1.0"
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+
+  frontend:
+    platform: linux/arm64
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=512"
+      NEXT_TELEMETRY_DISABLED: "1"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "2.0"

@@ -11,8 +11,19 @@ const DEV_USERNAME = 'jackson'
 
 async function ensureToken() {
   if (typeof window === 'undefined') return
-  if (localStorage.getItem('token')) return
 
+  // Valida token existente chamando /auth/me
+  if (localStorage.getItem('token')) {
+    try {
+      await api.get('/auth/me')
+      return // Token válido
+    } catch {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+    }
+  }
+
+  // Tenta login
   try {
     const { data } = await api.post('/auth/login', { email: DEV_EMAIL, password: DEV_PASSWORD })
     localStorage.setItem('token', data.access_token)
@@ -20,6 +31,7 @@ async function ensureToken() {
     return
   } catch {}
 
+  // Tenta registro (primeiro acesso)
   try {
     const { data } = await api.post('/auth/register', {
       email: DEV_EMAIL,

@@ -26,10 +26,21 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Interceptor de RESPONSE — 401 ignorado (auth desativado temporariamente)
+// Interceptor de RESPONSE — limpa token expirado e recarrega
 api.interceptors.response.use(
   (response) => response,
-  (error) => Promise.reject(error)
+  (error) => {
+    if (
+      error.response?.status === 401 &&
+      typeof window !== 'undefined' &&
+      !error.config?.url?.includes('/auth/')
+    ) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      window.location.reload()
+    }
+    return Promise.reject(error)
+  }
 )
 
 export default api

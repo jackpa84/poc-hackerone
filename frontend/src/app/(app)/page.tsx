@@ -863,9 +863,6 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Passe o mouse sobre qualquer card para ver informações de prioridade
-          </p>
         </div>
         <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors">
           <RefreshCw size={14} className="text-muted-foreground" />
@@ -1805,7 +1802,6 @@ function VulnTypeRow({ findings }: { findings: FindingItem[] }) {
       <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
         <Bug size={13} className="text-muted-foreground" />
         Tipos de Vulnerabilidade
-        <span className="text-[10px] text-muted-foreground font-normal">(passe o mouse para detalhes)</span>
       </h2>
       <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
         {VULN_TYPES.map(t => {

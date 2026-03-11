@@ -7,6 +7,8 @@ de recon automaticamente.
 """
 from datetime import datetime, timedelta
 
+from beanie.operators import In
+
 from app.models.job import Job
 from app.models.program import Program
 from app.models.target import Target
@@ -46,7 +48,7 @@ async def task_auto_scheduler(ctx):
             existing_job = await Job.find_one(
                 Job.target_id == str(target.id),
                 Job.type == "recon",
-                Job.status.in_(["pending", "running"]),
+                In(Job.status, ["pending", "running"]),
             )
             if existing_job:
                 skipped += 1
