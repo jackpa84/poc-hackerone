@@ -19,6 +19,22 @@ export interface TokenResponse {
   user: User
 }
 
+// ── Programs ──────────────────────────────────────────────────────────────────
+
+export type ProgramStatus = 'active' | 'paused' | 'closed'
+
+export interface Program {
+  id: string
+  name: string
+  platform: string
+  url: string | null
+  status: ProgramStatus
+  scope_notes: string | null
+  max_bounty: number | null
+  tags: string[]
+  created_at: string
+}
+
 // ── Targets ───────────────────────────────────────────────────────────────────
 
 export interface Target {

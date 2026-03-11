@@ -128,7 +128,7 @@ services:
     command: arq app.workers.settings.WorkerSettings
     restart: on-failure
     deploy:
-      replicas: 2
+      replicas: 4
       resources:
         limits:
           memory: 2048M

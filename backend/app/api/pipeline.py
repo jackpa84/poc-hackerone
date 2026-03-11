@@ -46,8 +46,14 @@ async def _enqueue_pipeline(user_id: str, finding_id: str) -> Job:
     return job
 
 
+# Handle oficial do HackerOne para testes — não afeta reputação nem bounties
+H1_SANDBOX_HANDLE = "security-test-sandbox"
+
+
 class RunRequest(BaseModel):
     finding_id: str
+    team_handle: str | None = None
+    dry_run: bool = False   # True → envia para @security-test-sandbox (teste seguro)
 
 
 @router.post("/run")
@@ -59,13 +65,22 @@ async def run_pipeline(data: RunRequest, user: User = Depends(get_current_user))
     if not finding or finding.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
 
-    job = await _enqueue_pipeline(str(user.id), data.finding_id)
+    # Dry run → força o handle para o sandbox oficial do HackerOne
+    effective_handle = H1_SANDBOX_HANDLE if data.dry_run else data.team_handle
+
+    job = await _enqueue_pipeline(str(user.id), data.finding_id, effective_handle)
 
     return {
         "job_id": str(job.id),
         "finding_id": data.finding_id,
+        "dry_run": data.dry_run,
+        "team_handle": effective_handle,
         "status": "queued",
-        "message": f"Pipeline enfileirado para '{finding.title}'",
+        "message": (
+            f"[TESTE SANDBOX] Pipeline enfileirado para '{finding.title}' → @{H1_SANDBOX_HANDLE}"
+            if data.dry_run else
+            f"Pipeline enfileirado para '{finding.title}'"
+        ),
     }
 
 
@@ -129,6 +144,156 @@ async def list_pipeline_jobs(user: User = Depends(get_current_user)):
         })
 
     return result
+
+
+@router.post("/test-submit")
+async def test_submit_to_sandbox(data: RunRequest, user: User = Depends(get_current_user)):
+    """
+    Envia o relatório para o programa sandbox oficial do HackerOne (@security-test-sandbox).
+    Seguro para testar: não afeta reputação, Signal nem bounties reais.
+    O sandbox é mantido pelo próprio HackerOne para validar integrações de API.
+    """
+    from bson import ObjectId
+    from app.models.report import Report
+    from app.services import hackerone as h1
+
+    uid = str(user.id)
+    finding = await Finding.get(ObjectId(data.finding_id))
+    if not finding or finding.user_id != uid:
+        raise HTTPException(status_code=404, detail="Finding não encontrado")
+
+    if not h1._has_credentials():
+        raise HTTPException(status_code=503, detail="Credenciais HackerOne não configuradas")
+
+    report = await Report.find_one(Report.finding_id == data.finding_id, Report.is_ready == True)
+
+    title   = f"[SANDBOX TEST] {finding.title}"
+    vuln    = report.content_markdown if report else (finding.description or "Teste de integração via API.")
+    impact  = finding.impact or "Teste de integração — sem impacto real."
+
+    try:
+        result = await h1.submit_report(
+            team_handle=H1_SANDBOX_HANDLE,
+            title=title,
+            vulnerability_information=vuln,
+            impact=impact,
+            severity_rating=finding.severity if finding.severity != "informational" else "none",
+        )
+        h1_report_id = result.get("data", {}).get("id", "?")
+        return {
+            "submitted": True,
+            "sandbox": True,
+            "team_handle": H1_SANDBOX_HANDLE,
+            "h1_report_id": h1_report_id,
+            "h1_url": f"https://hackerone.com/reports/{h1_report_id}",
+            "message": f"✅ Teste enviado para @{H1_SANDBOX_HANDLE} — Report #{h1_report_id}",
+            "note": "Este report foi enviado ao sandbox do HackerOne. Não afeta sua reputação.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Erro ao enviar para sandbox: {e}")
+
+
+@router.post("/analyze")
+async def analyze_finding(data: RunRequest, user: User = Depends(get_current_user)):
+    """
+    Análise imediata com IA antes da submissão ao HackerOne.
+
+    1. Carrega o finding
+    2. Avalia os 9 critérios de prontidão
+    3. Gera relatório com Ollama (ou Claude como fallback)
+    4. Retorna score, checklist detalhado, rascunho do relatório e recomendação
+    """
+    from bson import ObjectId
+    from app.models.report import Report
+    from app.services.ai_reporter import generate_report
+
+    uid = str(user.id)
+    finding = await Finding.get(ObjectId(data.finding_id))
+    if not finding or finding.user_id != uid:
+        raise HTTPException(status_code=404, detail="Finding não encontrado")
+
+    # ── Avaliar prontidão ────────────────────────────────────────────────────
+    checks = []
+
+    def chk(key: str, label: str, ok: bool, points: int, tip: str):
+        checks.append({"key": key, "label": label, "ok": ok, "points": points, "tip": tip})
+        return points if ok else 0
+
+    earned = 0
+    earned += chk("title",       "Título descritivo (>20 chars)",          len(finding.title or "") > 20, 10, "Ex: [XSS Stored] Injeção de script em perfil público permite roubo de sessão")
+    earned += chk("url",         "URL afetada preenchida",                  bool(finding.affected_url and len(finding.affected_url) > 5), 15, "Inclua a URL completa com parâmetros")
+    earned += chk("description", "Descrição com ≥100 chars",               len(finding.description or "") >= 100, 15, "Explique o que é, onde está e por que existe")
+    earned += chk("steps",       "Passos para reproduzir (≥50 chars)",      len(finding.steps_to_reproduce or "") >= 50, 20, "Numerados e detalhados para que qualquer triager reproduza")
+    earned += chk("impact",      "Impacto documentado (≥50 chars)",         len(finding.impact or "") >= 50, 15, "Descreva o dano real: dados expostos, contas comprometidas")
+    earned += chk("payload",     "Payload ou parâmetro vulnerável",         bool(finding.payload or finding.parameter), 10, "Inclua o payload exato que comprova a vulnerabilidade")
+    earned += chk("severity",    "Severidade justificada",                  not (finding.severity == "medium" and not finding.cvss_score), 5, "Argumente por que essa severidade é correta com CVSS")
+    earned += chk("cvss",        "CVSS Score calculado",                    finding.cvss_score is not None, 5, "Use cvssscores.com para calcular o vetor correto")
+
+    report = await Report.find_one(Report.finding_id == data.finding_id, Report.is_ready == True)
+    earned += chk("report",      "Relatório de IA gerado",                  report is not None, 5, "Gere o relatório para criar um draft profissional")
+
+    score = round(earned / 100 * 100)
+
+    if score >= 90:
+        verdict = "✅ PRONTO — pode submeter ao HackerOne agora"
+        verdict_level = "green"
+    elif score >= 70:
+        verdict = "⚡ QUASE PRONTO — recomendado submeter (score aceitável)"
+        verdict_level = "yellow"
+    elif score >= 50:
+        verdict = "⚠ INCOMPLETO — preencha os campos faltantes antes de submeter"
+        verdict_level = "orange"
+    else:
+        verdict = "❌ NÃO PRONTO — muitos campos críticos ausentes"
+        verdict_level = "red"
+
+    # ── Gerar relatório com IA (se ainda não existe) ─────────────────────────
+    report_markdown = None
+    report_id = None
+    ai_error = None
+
+    if report:
+        report_markdown = report.content_markdown
+        report_id = str(report.id)
+    else:
+        try:
+            markdown, pt, ct = await generate_report(finding)
+            new_report = Report(
+                user_id=uid,
+                finding_id=data.finding_id,
+                content_markdown=markdown,
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                is_ready=True,
+            )
+            await new_report.insert()
+            report_markdown = markdown
+            report_id = str(new_report.id)
+            # Atualiza o check de relatório
+            checks[-1]["ok"] = True
+            earned += 5
+            score = min(100, score + 5)
+        except Exception as e:
+            ai_error = str(e)
+
+    missing = [c for c in checks if not c["ok"]]
+
+    return {
+        "finding_id":      data.finding_id,
+        "finding_title":   finding.title,
+        "finding_severity": finding.severity,
+        "score":           score,
+        "verdict":         verdict,
+        "verdict_level":   verdict_level,
+        "checks":          checks,
+        "missing":         missing,
+        "missing_count":   len(missing),
+        "report_id":       report_id,
+        "report_preview":  (report_markdown or "")[:800] if report_markdown else None,
+        "ai_error":        ai_error,
+        "ready_to_submit": score >= 70,
+        "team_handle":     data.team_handle,
+    }
 
 
 @router.get("/jobs/{job_id}")
