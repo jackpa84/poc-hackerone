@@ -1,12 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  Bug, Target, DollarSign, Zap, RefreshCw,
+  Bug, DollarSign, Zap, RefreshCw,
   AlertCircle, ExternalLink, ChevronRight, Clock, CheckCircle2, XCircle,
   Info, Shield, Crosshair, Activity,
-  BrainCircuit, Circle, Terminal, ChevronDown, Radio,
+  BrainCircuit, Radio, Terminal, X, Send, FileText, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
@@ -62,21 +62,368 @@ interface AiReport {
   completion_tokens?: number
 }
 
-interface ServiceStatus {
-  key: string
-  label: string
-  description: string
-  state: string
-  status: string
-  status_text: string
-  started_at: string | null
-}
-
 interface LogLine {
   timestamp: string
   message: string
-  level: string
+  level: 'error' | 'warn' | 'info' | 'debug' | 'stdout'
 }
+
+interface ReadinessCheck {
+  key: string
+  label: string
+  ok: boolean
+  points: number
+  tip: string
+}
+
+interface Readiness {
+  score: number
+  label: string
+  color: string
+  checks: ReadinessCheck[]
+  suggestions: string[]
+  has_report: boolean
+  report_id: string | null
+}
+
+// ── Report Drawer ───────────────────────────────────────────────────────────
+
+function ReportDrawer({ finding, onClose }: { finding: FindingItem; onClose: () => void }) {
+  const [readiness, setReadiness] = useState<Readiness | null>(null)
+  const [loadingReadiness, setLoadingReadiness] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [pipelineMsg, setPipelineMsg] = useState<string | null>(null)
+
+  const sev = SEV[finding.severity] ?? SEV.informational
+
+  useEffect(() => {
+    setReadiness(null)
+    setLoadingReadiness(true)
+    setPipelineMsg(null)
+    api.get(`/findings/${finding.id}/readiness`)
+      .then(r => setReadiness(r.data))
+      .catch(() => {})
+      .finally(() => setLoadingReadiness(false))
+  }, [finding.id])
+
+  const runPipeline = async () => {
+    setSubmitting(true)
+    setPipelineMsg(null)
+    try {
+      const res = await api.post('/pipeline/run', { finding_id: finding.id })
+      setPipelineMsg(res.data.message ?? 'Pipeline enfileirado!')
+    } catch (e: any) {
+      setPipelineMsg(e?.response?.data?.detail ?? 'Erro ao iniciar pipeline.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const scoreColor =
+    (readiness?.score ?? 0) >= 90 ? 'text-emerald-400' :
+    (readiness?.score ?? 0) >= 70 ? 'text-yellow-400' :
+    (readiness?.score ?? 0) >= 40 ? 'text-orange-400' : 'text-red-400'
+
+  const scoreBg =
+    (readiness?.score ?? 0) >= 90 ? 'bg-emerald-500' :
+    (readiness?.score ?? 0) >= 70 ? 'bg-yellow-500' :
+    (readiness?.score ?? 0) >= 40 ? 'bg-orange-500' : 'bg-red-500'
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Drawer */}
+      <div className="fixed right-0 top-0 h-screen w-[480px] max-w-full bg-background border-l border-border z-50 flex flex-col shadow-2xl">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className={cn('px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0', sev.bg, sev.text)}>
+              {finding.severity}
+            </span>
+            <h2 className="text-sm font-semibold truncate">{finding.title}</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors shrink-0">
+            <X size={15} className="text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+          {/* Meta grid */}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'Status',     value: STATUS_LABEL[finding.status]?.label ?? finding.status },
+              { label: 'Tipo',       value: finding.type?.replace('_', ' ').toUpperCase() },
+              { label: 'CVSS',       value: finding.cvss_score != null ? finding.cvss_score.toFixed(1) : '—' },
+              { label: 'Bounty',     value: finding.bounty_amount ? `$${finding.bounty_amount.toLocaleString()}` : '—' },
+            ].map(({ label, value }) => value && (
+              <div key={label} className="bg-card border border-border rounded-lg px-3 py-2">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
+                <p className="text-xs font-semibold">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* URL */}
+          {finding.affected_url && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">URL Afetada</p>
+              <a
+                href={finding.affected_url.startsWith('http') ? finding.affected_url : `https://${finding.affected_url}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-[11px] text-blue-400 hover:text-blue-300 break-all"
+              >
+                <ExternalLink size={10} className="shrink-0" />
+                {finding.affected_url}
+              </a>
+            </div>
+          )}
+
+          {/* Description */}
+          {finding.description && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Descrição</p>
+              <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{finding.description}</p>
+            </div>
+          )}
+
+          {/* Impact */}
+          {finding.impact && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Impacto</p>
+              <p className="text-xs text-foreground leading-relaxed">{finding.impact}</p>
+            </div>
+          )}
+
+          {/* Steps */}
+          {finding.steps_to_reproduce && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Passos para Reproduzir</p>
+              <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{finding.steps_to_reproduce}</p>
+            </div>
+          )}
+
+          {/* Readiness */}
+          <div className="border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
+              <div className="flex items-center gap-2">
+                <FileText size={13} className="text-muted-foreground" />
+                <span className="text-xs font-semibold">Score de Prontidão</span>
+              </div>
+              {loadingReadiness
+                ? <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                : readiness && (
+                  <span className={cn('text-sm font-bold', scoreColor)}>
+                    {readiness.score}% — {readiness.label}
+                  </span>
+                )
+              }
+            </div>
+
+            {readiness && (
+              <>
+                {/* Progress bar */}
+                <div className="h-1.5 bg-zinc-800">
+                  <div
+                    className={cn('h-full transition-all', scoreBg)}
+                    style={{ width: `${readiness.score}%` }}
+                  />
+                </div>
+
+                {/* Checklist */}
+                <div className="divide-y divide-border">
+                  {readiness.checks.map(c => (
+                    <div key={c.key} className="flex items-start gap-3 px-4 py-2.5">
+                      {c.ok
+                        ? <CheckCircle2 size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                        : <XCircle size={13} className="text-zinc-600 shrink-0 mt-0.5" />
+                      }
+                      <div className="flex-1 min-w-0">
+                        <p className={cn('text-[11px] font-medium', c.ok ? 'text-foreground' : 'text-muted-foreground')}>
+                          {c.label}
+                        </p>
+                        {!c.ok && c.tip && (
+                          <p className="text-[10px] text-zinc-600 mt-0.5 leading-relaxed">{c.tip}</p>
+                        )}
+                      </div>
+                      <span className={cn('text-[10px] font-bold shrink-0', c.ok ? 'text-emerald-400' : 'text-zinc-600')}>
+                        +{c.points}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+        </div>
+
+        {/* Footer — action buttons */}
+        <div className="px-5 py-4 border-t border-border space-y-3 shrink-0">
+
+          {pipelineMsg && (
+            <div className={cn(
+              'text-[11px] px-3 py-2 rounded-lg border',
+              pipelineMsg.toLowerCase().includes('erro')
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+            )}>
+              {pipelineMsg}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={runPipeline}
+              disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+            >
+              {submitting
+                ? <><Loader2 size={13} className="animate-spin" /> Enfileirando…</>
+                : <><BrainCircuit size={13} /> Gerar Relatório com IA</>
+              }
+            </button>
+            <Link
+              href="/pipeline"
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-border text-xs text-muted-foreground hover:bg-accent transition-colors"
+            >
+              <Send size={12} /> Pipeline
+            </Link>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+const LOG_SERVICES = [
+  { key: 'backend', label: 'API' },
+  { key: 'worker',  label: 'Worker' },
+  { key: 'frontend',label: 'Frontend' },
+  { key: 'mongodb', label: 'MongoDB' },
+  { key: 'redis',   label: 'Redis' },
+] as const
+
+type ServiceKey = typeof LOG_SERVICES[number]['key']
+
+const LOG_LEVEL_CLS: Record<LogLine['level'], string> = {
+  error:  'text-red-400',
+  warn:   'text-yellow-400',
+  info:   'text-emerald-400',
+  debug:  'text-zinc-500',
+  stdout: 'text-zinc-300',
+}
+
+function ContainerLogs() {
+  const [service, setService] = useState<ServiceKey>('backend')
+  const [lines, setLines] = useState<LogLine[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const fetchLogs = useCallback(async (svc: ServiceKey) => {
+    setLoading(true)
+    try {
+      const res = await api.get(`/logs/services/${svc}?tail=50`)
+      setLines(res.data.lines ?? [])
+      setLoaded(true)
+    } catch {
+      setLines([{ timestamp: '', message: 'Erro ao carregar logs.', level: 'error' }])
+      setLoaded(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Só busca quando usuário troca de aba (e já carregou pelo menos uma vez)
+  const handleTab = (svc: ServiceKey) => {
+    setService(svc)
+    if (loaded) fetchLogs(svc)
+  }
+
+  useEffect(() => {
+    if (loaded) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [lines, loaded])
+
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden geo-shadow flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <Terminal size={14} className="text-emerald-400" />
+          <span className="text-sm font-semibold">Logs dos Containers</span>
+        </div>
+        <button
+          onClick={() => fetchLogs(service)}
+          disabled={loading}
+          className="p-1 rounded hover:bg-accent transition-colors disabled:opacity-40"
+          title="Carregar / Atualizar"
+        >
+          <RefreshCw size={12} className={cn('text-muted-foreground', loading && 'animate-spin')} />
+        </button>
+      </div>
+
+      {/* Service tabs */}
+      <div className="flex border-b border-border shrink-0">
+        {LOG_SERVICES.map(s => (
+          <button
+            key={s.key}
+            onClick={() => handleTab(s.key)}
+            className={cn(
+              'px-3 py-2 text-[11px] font-medium transition-colors border-b-2',
+              service === s.key
+                ? 'text-foreground border-emerald-500'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Log lines */}
+      <div className="h-72 overflow-y-auto font-mono text-[11px] p-3 space-y-0.5 bg-zinc-950/60">
+        {!loaded && !loading && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-zinc-600">
+            <Terminal size={20} className="opacity-30" />
+            <p className="text-[11px]">Clique em <RefreshCw size={10} className="inline" /> para carregar os logs</p>
+          </div>
+        )}
+        {loading && (
+          <div className="flex items-center justify-center h-full gap-2 text-zinc-600">
+            <RefreshCw size={13} className="animate-spin" />
+            <span>Carregando…</span>
+          </div>
+        )}
+        {loaded && !loading && lines.length === 0 && (
+          <p className="text-zinc-600 italic">Sem logs disponíveis.</p>
+        )}
+        {loaded && !loading && lines.map((l, i) => (
+          <div key={i} className="flex gap-2 leading-5">
+            {l.timestamp && (
+              <span className="text-zinc-600 shrink-0 select-none">
+                {l.timestamp.length > 19 ? l.timestamp.slice(11, 19) : l.timestamp}
+              </span>
+            )}
+            <span className={cn('break-all whitespace-pre-wrap', LOG_LEVEL_CLS[l.level])}>
+              {l.message}
+            </span>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+}
+
 
 // ── Tooltip ────────────────────────────────────────────────────────────────
 
@@ -387,37 +734,22 @@ export default function DashboardPage() {
   const [allFindings, setAllFindings] = useState<FindingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [sevFilter, setSevFilter] = useState<string | null>(null)
+  const [selectedFinding, setSelectedFinding] = useState<FindingItem | null>(null)
 
   // AI Reports log
   const [aiReports, setAiReports] = useState<AiReport[]>([])
 
-  // Service Console
-  const [services, setServices] = useState<ServiceStatus[]>([])
-  const [consoleLogs, setConsoleLogs] = useState<LogLine[]>([])
-  const [selectedService, setSelectedService] = useState('worker')
-  const [consoleAutoScroll, setConsoleAutoScroll] = useState(true)
-  const consoleBottomRef = useRef<HTMLDivElement>(null)
-
-  const loadLogs = useCallback(async (key: string) => {
-    try {
-      const { data: d } = await api.get(`/logs/services/${key}`, { params: { tail: 80 } })
-      setConsoleLogs(d.lines ?? [])
-    } catch {}
-  }, [])
-
   const load = async () => {
     setLoading(true)
     try {
-      const [dashRes, findingsRes, reportsRes, servicesRes] = await Promise.all([
+      const [dashRes, findingsRes, reportsRes] = await Promise.all([
         api.get('/dashboard'),
         api.get('/findings'),
         api.get('/reports'),
-        api.get('/logs/services').catch(() => ({ data: [] })),
       ])
       setData(dashRes.data)
       setAllFindings(findingsRes.data)
       setAiReports(reportsRes.data ?? [])
-      setServices(servicesRes.data ?? [])
     } catch {
       setData(null)
     } finally {
@@ -452,18 +784,6 @@ export default function DashboardPage() {
     // Re-fetch findings quando há novos
     api.get('/findings').then(r => setAllFindings(r.data)).catch(() => {})
   }, [rt.findingEvents.length])
-
-  // Poll console logs every 5s
-  useEffect(() => {
-    loadLogs(selectedService)
-    const t = setInterval(() => loadLogs(selectedService), 5000)
-    return () => clearInterval(t)
-  }, [selectedService, loadLogs])
-
-  // Auto-scroll console
-  useEffect(() => {
-    if (consoleAutoScroll) consoleBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [consoleLogs, consoleAutoScroll])
 
   const filtered = sevFilter
     ? allFindings.filter(f => f.severity === sevFilter)
@@ -768,7 +1088,7 @@ export default function DashboardPage() {
             'Clique em "Ver todos" para acessar a lista completa na página de relatórios.',
           ],
         }}>
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="bg-card border border-border rounded-xl overflow-hidden geo-shadow">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <BrainCircuit size={14} className="text-violet-400" />
@@ -833,119 +1153,8 @@ export default function DashboardPage() {
           </div>
         </Tooltip>
 
-        {/* Service Console Monitor */}
-        <Tooltip content={{
-          title: 'Monitor de Console — Serviços',
-          priority: services.some(s => s.status === 'unhealthy') ? 'high' : services.some(s => s.status === 'stopped') ? 'medium' : 'info',
-          description: 'Monitor em tempo real dos containers Docker. Mostra status de saúde e os últimos logs de cada serviço. Atualiza automaticamente a cada 5 segundos.',
-          details: [
-            { label: 'Serviços', value: String(services.length) },
-            { label: 'Saudáveis', value: String(services.filter(s => s.status === 'healthy').length) },
-            { label: 'Com problema', value: String(services.filter(s => s.status !== 'healthy').length) },
-            { label: 'Atualização', value: 'a cada 5s' },
-          ],
-          actions: [
-            'Clique nas abas de serviço para alternar os logs.',
-            'Dot verde = healthy, vermelho = unhealthy, cinza = stopped.',
-            'Worker com erros pode indicar jobs travados — verifique.',
-            'Acesse a página Logs para visualização completa com 300 linhas.',
-          ],
-        }}>
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Terminal size={14} className="text-emerald-400" />
-                <span className="text-sm font-semibold">Console</span>
-                <Info size={10} className="text-muted-foreground/30" />
-              </div>
-              <Link href="/logs" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                Logs completos <ChevronRight size={10} />
-              </Link>
-            </div>
-
-            {/* Service tabs */}
-            <div className="flex gap-1 px-3 py-2 border-b border-border overflow-x-auto">
-              {services.length === 0
-                ? ['backend', 'worker', 'frontend', 'mongodb', 'redis'].map(k => (
-                    <button
-                      key={k}
-                      onClick={() => setSelectedService(k)}
-                      className={cn(
-                        'flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] border transition-all shrink-0',
-                        selectedService === k ? 'bg-primary/15 border-primary/30 text-primary' : 'border-border text-muted-foreground hover:bg-accent'
-                      )}
-                    >
-                      <Circle size={5} className="fill-zinc-400 text-zinc-400" />
-                      {k}
-                    </button>
-                  ))
-                : services.map(svc => {
-                    const dotColor = svc.status === 'healthy' ? 'fill-emerald-400 text-emerald-400' : svc.status === 'unhealthy' ? 'fill-red-400 text-red-400' : 'fill-zinc-400 text-zinc-400'
-                    return (
-                      <button
-                        key={svc.key}
-                        onClick={() => setSelectedService(svc.key)}
-                        className={cn(
-                          'flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] border transition-all shrink-0',
-                          selectedService === svc.key ? 'bg-primary/15 border-primary/30 text-primary' : 'border-border text-muted-foreground hover:bg-accent'
-                        )}
-                      >
-                        <Circle size={5} className={cn('fill-current', dotColor)} />
-                        {svc.label}
-                      </button>
-                    )
-                  })
-              }
-            </div>
-
-            {/* Log terminal */}
-            <div className="relative">
-              <div className="h-52 overflow-y-auto bg-zinc-950 p-3 font-mono text-[10px] space-y-0.5">
-                {consoleLogs.length === 0 ? (
-                  <p className="text-zinc-600 italic">Sem logs disponíveis...</p>
-                ) : (
-                  consoleLogs.slice(-60).map((line, i) => (
-                    <div key={i} className="flex gap-2 leading-relaxed">
-                      <span className="text-zinc-700 shrink-0 select-none tabular-nums">
-                        {line.timestamp ? new Date(line.timestamp).toLocaleTimeString('pt-BR') : ''}
-                      </span>
-                      <span className={cn(
-                        'break-all',
-                        line.level === 'error' ? 'text-red-400' :
-                        line.level === 'warn'  ? 'text-yellow-400' :
-                        line.level === 'info'  ? 'text-blue-400' :
-                        'text-zinc-400'
-                      )}>
-                        {line.message}
-                      </span>
-                    </div>
-                  ))
-                )}
-                <div ref={consoleBottomRef} />
-              </div>
-
-              {/* Auto-scroll + status bar */}
-              <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-t border-zinc-800">
-                <span className="text-[9px] text-zinc-600 font-mono">
-                  {consoleLogs.length} linhas · atualiza em 5s
-                </span>
-                <button
-                  onClick={() => setConsoleAutoScroll(v => !v)}
-                  className={cn(
-                    'flex items-center gap-1 text-[9px] px-2 py-0.5 rounded border transition-all',
-                    consoleAutoScroll
-                      ? 'bg-primary/15 border-primary/30 text-primary'
-                      : 'border-zinc-700 text-zinc-500 hover:bg-zinc-800'
-                  )}
-                >
-                  <ChevronDown size={8} className={consoleAutoScroll ? 'animate-bounce' : ''} />
-                  scroll {consoleAutoScroll ? 'on' : 'off'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </Tooltip>
+        {/* Container Logs */}
+        <ContainerLogs />
 
       </div>
       {/* ── fim AI + Console ─────────────────────────────────────────────── */}

@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL: str = "xploiter/the-xploiter:latest"
 
+    # HackerOne API (aceita ambos os nomes de variável)
+    HACKERONE_USERNAME: str = ""      # compatibilidade legada
+    HACKERONE_API_USERNAME: str = ""  # nome preferido
+    HACKERONE_API_TOKEN: str = ""
+
+    @property
+    def h1_username(self) -> str:
+        return self.HACKERONE_API_USERNAME or self.HACKERONE_USERNAME
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

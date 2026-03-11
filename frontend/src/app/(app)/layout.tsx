@@ -52,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Sidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
           <RealtimeStatusBar />
-          <main className="flex-1 overflow-auto p-6 lg:p-8">
+          <main className="flex-1 overflow-auto p-6 lg:p-8 geo-bg">
             {children}
           </main>
         </div>

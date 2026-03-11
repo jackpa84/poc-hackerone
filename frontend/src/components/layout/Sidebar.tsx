@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  Shield, Target, Bug,
+  Shield, Target, Bug, Globe,
   LayoutDashboard, LogOut, ChevronRight, BookOpen, SendHorizonal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: '/',           label: 'Dashboard',  icon: LayoutDashboard },
   { href: '/jobs',       label: 'Jobs',       icon: Target },
   { href: '/findings',   label: 'Findings',   icon: Bug },
+  { href: '/hackerone',  label: 'HackerOne',  icon: Globe },
   { href: '/pipeline',   label: 'Pipeline',   icon: SendHorizonal },
   { href: '/report-guide', label: 'Guia Report', icon: BookOpen },
 ]

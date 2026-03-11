@@ -61,6 +61,78 @@
   .badge-low      { @apply bg-zinc-500/15 text-zinc-400 border border-zinc-500/30; }
   .badge-info     { @apply bg-zinc-500/15 text-zinc-400 border border-zinc-500/30; }
 
+  /* Sombra geométrica no hover — efeito 3D deslocado */
+  .geo-shadow {
+    @apply relative transition-all duration-300 ease-out;
+  }
+  .geo-shadow::after {
+    content: '';
+    @apply absolute inset-0 rounded-xl border border-primary/0 -z-10;
+    transform: translate(0, 0);
+    background: hsl(24 94% 50% / 0);
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  .geo-shadow:hover {
+    transform: translate(-3px, -3px);
+  }
+  .geo-shadow:hover::after {
+    transform: translate(6px, 6px);
+    background: hsl(24 94% 50% / 0.08);
+    border-color: hsl(24 94% 50% / 0.25);
+  }
+
+  /* Plano de fundo geométrico */
+  .geo-bg {
+    position: relative;
+    overflow: hidden;
+  }
+  .geo-bg::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      /* Grade de pontos */
+      radial-gradient(circle at center, hsl(24 94% 50% / 0.03) 1px, transparent 1px),
+      /* Gradiente diagonal laranja sutil */
+      linear-gradient(135deg, hsl(24 94% 50% / 0.04) 0%, transparent 50%, hsl(24 94% 50% / 0.02) 100%),
+      /* Gradiente canto superior direito */
+      radial-gradient(ellipse at 85% 5%, hsl(24 94% 50% / 0.06) 0%, transparent 50%),
+      /* Gradiente canto inferior esquerdo */
+      radial-gradient(ellipse at 10% 90%, hsl(24 94% 50% / 0.04) 0%, transparent 45%);
+    background-size:
+      24px 24px,
+      100% 100%,
+      100% 100%,
+      100% 100%;
+  }
+  .geo-bg::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      /* Hexágono grande canto superior direito */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cpolygon points='400,50 700,200 700,500 400,650 100,500 100,200' fill='none' stroke='%23f97316' stroke-width='0.5' opacity='0.06'/%3E%3Cpolygon points='400,120 640,240 640,460 400,580 160,460 160,240' fill='none' stroke='%23f97316' stroke-width='0.3' opacity='0.04'/%3E%3C/svg%3E") no-repeat calc(100% + 200px) -150px,
+      /* Triângulo inferior esquerdo */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cpolygon points='0,600 300,0 600,600' fill='none' stroke='%23f97316' stroke-width='0.5' opacity='0.05'/%3E%3Cpolygon points='60,560 300,80 540,560' fill='none' stroke='%23f97316' stroke-width='0.3' opacity='0.03'/%3E%3C/svg%3E") no-repeat -200px calc(100% + 50px),
+      /* Losango central */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cpolygon points='200,10 390,200 200,390 10,200' fill='none' stroke='%23f97316' stroke-width='0.4' opacity='0.035'/%3E%3C/svg%3E") no-repeat 50% 60%,
+      /* Linhas diagonais sutis */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cline x1='0' y1='100' x2='100' y2='0' stroke='%23f97316' stroke-width='0.2' opacity='0.04'/%3E%3C/svg%3E");
+    background-size:
+      800px 800px,
+      600px 600px,
+      400px 400px,
+      100px 100px;
+  }
+  .geo-bg > * {
+    position: relative;
+    z-index: 1;
+  }
+
   .logs-terminal {
     scrollbar-width: thin;
     scrollbar-color: hsl(0 0% 14%) transparent;

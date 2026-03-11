@@ -10,13 +10,18 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
-    # WiredTiger cache mínimo permitido pelo MongoDB 7 (256MB)
-    command: mongod --wiredTigerCacheSizeGB 0.5
+    command: >
+      mongod
+        --wiredTigerCacheSizeGB 1
+        --setParameter wiredTigerConcurrentReadTransactions=256
+        --setParameter wiredTigerConcurrentWriteTransactions=128
+        --setParameter diagnosticDataCollectionEnabled=false
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 640M
+          memory: 1280M
+          cpus: "2.0"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 15s
@@ -31,13 +36,21 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    # maxmemory deve ser menor que o limite do container para evitar OOM kill
-    command: redis-server --appendonly yes --maxmemory 112mb --maxmemory-policy allkeys-lru
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --tcp-backlog 511
+        --hz 100
+        --io-threads 2
+        --save ""
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 144M
+          memory: 320M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 15s
@@ -61,19 +74,27 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      HACKERONE_USERNAME: ${HACKERONE_USERNAME:-}
+      HACKERONE_API_USERNAME: ${HACKERONE_API_USERNAME:-}
+      HACKERONE_API_TOKEN: ${HACKERONE_API_TOKEN:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-xploiter/the-xploiter:latest}
+      # Uvicorn workers = cores disponíveis
+      WEB_CONCURRENCY: 4
     volumes:
       - ./tools:/app/tools
-      - ./backend/app:/app/app            # hot-reload: só o código Python
+      - ./backend/app:/app/app
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - nuclei_templates:/root/.local
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # acesso ao Ollama no host
+      - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 320M
+          memory: 512M
+          cpus: "2.0"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -81,7 +102,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # ── Worker de background ──────────────────────────────────────────────────
+  # ── Workers de background (2 réplicas) ──────────────────────────────────
   worker:
     build: ./backend
     depends_on:
@@ -93,18 +114,32 @@ services:
       MONGO_URI: mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/bugbounty?authSource=admin
       REDIS_URL: ${REDIS_URL}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-xploiter/the-xploiter:latest}
+      HACKERONE_USERNAME: ${HACKERONE_USERNAME:-}
+      HACKERONE_API_USERNAME: ${HACKERONE_API_USERNAME:-}
+      HACKERONE_API_TOKEN: ${HACKERONE_API_TOKEN:-}
     volumes:
       - ./tools:/app/tools
       - ./backend/app:/app/app
       - nuclei_templates:/root/.local
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # acesso ao Ollama no host
+      - "host.docker.internal:host-gateway"
     command: arq app.workers.settings.WorkerSettings
     restart: on-failure
     deploy:
+      replicas: 2
       resources:
         limits:
-          memory: 512M
+          memory: 2048M
+          cpus: "2.0"
+    # Permite mais file descriptors para ferramentas de scan
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    sysctls:
+      net.core.somaxconn: 1024
 
   # ── Interface web (Next.js) ───────────────────────────────────────────────
   frontend:
@@ -121,6 +156,7 @@ services:
       resources:
         limits:
           memory: 256M
+          cpus: "1.0"
 
   # ── UI para o MongoDB (iniciar manualmente quando precisar) ───────────────
   mongo-express:

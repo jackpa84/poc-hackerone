@@ -1,62 +1,91 @@
 """
 workers/settings.py — Configuração do ARQ Worker
 
-ARQ é uma fila de tarefas assíncrona que usa Redis como broker.
-Esta classe diz ao ARQ:
-  - Quais tarefas ele pode executar (functions)
-  - Onde está o Redis (redis_settings)
-  - Quantas tarefas em paralelo (max_jobs)
-  - Quanto tempo máximo por tarefa (job_timeout)
-  - O que fazer ao iniciar (on_startup) — precisa conectar no MongoDB
-  - Cron jobs — tarefas agendadas que rodam automaticamente
+Pipeline de automação completo (tudo automático):
 
-Para rodar o worker:
-  arq app.workers.settings.WorkerSettings
+  [Cron 6h]  task_auto_h1_sync       → Sincroniza programas + targets do HackerOne
+  [Cron 15m] task_auto_scheduler     → Cria jobs de recon para targets sem scan recente
+  [Workers]  task_run_recon          → subfinder + httpx + gau → cria findings automáticos
+  [Workers]  task_run_port_scan      → naabu → cria findings de portas abertas
+  [Workers]  task_run_dir_fuzz       → ffuf → cria findings de diretórios
+  [Workers]  task_run_dns_recon      → dnsx → cria findings de DNS
+  [Workers]  task_run_idor_test      → testa IDOR → cria findings críticos
+  [Cron 30m] task_auto_pipeline_sweep → encontra findings 'accepted' e roda pipeline
+  [Workers]  task_auto_pipeline      → gera relatório IA + submete ao HackerOne
+  [Startup]  task_seed_programs      → popula novos usuários com 13 programas curados
 """
 from arq.connections import RedisSettings
+from arq.cron import cron
 
 from app.config import settings
 from app.database import init_db
 
-# Tarefas disparadas manualmente via API
-from app.workers.recon import task_run_recon
-from app.workers.fuzzer import task_run_dir_fuzz, task_run_param_fuzz, task_run_sub_fuzz
-from app.workers.idor import task_run_idor_test
-from app.workers.reports import task_generate_report
-from app.workers.port_scan import task_run_port_scan
-from app.workers.dns_recon import task_run_dns_recon
+# ── Workers executados manualmente ou pelo scheduler ──────────────────────
+from app.workers.recon      import task_run_recon
+from app.workers.fuzzer     import task_run_dir_fuzz, task_run_param_fuzz, task_run_sub_fuzz
+from app.workers.idor       import task_run_idor_test
+from app.workers.reports    import task_generate_report
+from app.workers.port_scan  import task_run_port_scan
+from app.workers.dns_recon  import task_run_dns_recon
+from app.workers.pipeline   import task_auto_pipeline
 
-# Pipeline — automação end-to-end finding → relatório
-from app.workers.pipeline import task_auto_pipeline
+# ── Workers automáticos (cron jobs) ───────────────────────────────────────
+from app.workers.scheduler  import task_auto_scheduler    # recon de targets
+from app.workers.seeder     import task_seed_programs     # seed novos usuários
+from app.workers.auto_sync  import (                      # H1 sync + pipeline sweep
+    task_auto_h1_sync,
+    task_auto_pipeline_sweep,
+)
 
 
 async def startup(ctx):
-    """
-    Inicializa o MongoDB para o processo worker.
-    Necessário porque o worker é um processo separado da API.
-    """
+    """Inicializa o MongoDB e dispara sync inicial ao subir o worker."""
     await init_db()
     print("[worker] MongoDB inicializado.")
+
+    # Dispara sync do H1 imediatamente ao subir (não espera o cron de 6h)
+    redis = ctx.get("redis")
+    if redis:
+        try:
+            await redis.enqueue_job("task_auto_h1_sync")
+            print("[worker] Sync H1 inicial enfileirado.")
+        except Exception as e:
+            print(f"[worker] Não foi possível enfileirar sync H1: {e}")
 
 
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
 
-    # Tarefas que podem ser chamadas via redis.enqueue_job()
     functions = [
+        # Recon e ferramentas
         task_run_recon,
         task_run_dir_fuzz,
         task_run_param_fuzz,
         task_run_sub_fuzz,
         task_run_idor_test,
-        task_generate_report,
         task_run_port_scan,
         task_run_dns_recon,
+        # Relatórios e pipeline
+        task_generate_report,
         task_auto_pipeline,
+        # Automação
+        task_auto_scheduler,
+        task_seed_programs,
+        task_auto_h1_sync,
+        task_auto_pipeline_sweep,
     ]
 
-    cron_jobs = []
+    cron_jobs = [
+        # Recon automático: a cada 15 minutos
+        cron(task_auto_scheduler, minute={0, 15, 30, 45}, timeout=300),
+
+        # Sincronização com HackerOne: a cada 6 horas
+        cron(task_auto_h1_sync, hour={0, 6, 12, 18}, minute=5, timeout=600),
+
+        # Pipeline sweep para findings 'accepted': a cada 30 minutos
+        cron(task_auto_pipeline_sweep, minute={10, 40}, timeout=300),
+    ]
 
     on_startup = startup
-    max_jobs   = 20      # tarefas em paralelo por processo worker
-    job_timeout = 3600   # máximo 1 hora por tarefa
+    max_jobs   = 10
+    job_timeout = 5400   # 1.5h por tarefa (nuclei pode demorar)

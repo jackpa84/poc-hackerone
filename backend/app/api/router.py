@@ -1,15 +1,16 @@
-"""
-api/router.py — Agrega todos os routers da API com prefixo /api
-"""
+"""api/router.py — Agrega todos os routers da API com prefixo /api"""
 from fastapi import APIRouter
-from app.api import auth, targets, jobs, findings, reports, dashboard, pipeline, stream
+from app.api import auth, programs, targets, jobs, findings, reports, logs, dashboard, hackerone, pipeline, stream
 
 router = APIRouter(prefix="/api")
 router.include_router(auth.router)
 router.include_router(dashboard.router)
+router.include_router(programs.router)
 router.include_router(targets.router)
 router.include_router(jobs.router)
 router.include_router(findings.router)
 router.include_router(reports.router)
+router.include_router(logs.router)
+router.include_router(hackerone.router)
 router.include_router(pipeline.router)
 router.include_router(stream.router)

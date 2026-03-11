@@ -18,19 +18,25 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
 
 async def get_cached_dashboard(uid: str):
-    if settings.ENABLE_CACHING:
-        cached = await redis_client.get(f"dashboard:{uid}")
-        if cached:
-            return json.loads(cached)
+    if settings.ENABLE_CACHING and redis_client:
+        try:
+            cached = await redis_client.get(f"dashboard:{uid}")
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
     return None
 
 async def set_cached_dashboard(uid: str, data: dict):
-    if settings.ENABLE_CACHING:
-        await redis_client.setex(
-            f"dashboard:{uid}",
-            300,
-            json.dumps(data, default=str)
-        )
+    if settings.ENABLE_CACHING and redis_client:
+        try:
+            await redis_client.setex(
+                f"dashboard:{uid}",
+                300,
+                json.dumps(data, default=str)
+            )
+        except Exception:
+            pass
 
 @router.get("")
 async def get_dashboard(user: User = Depends(get_current_user)):
@@ -62,6 +68,7 @@ async def get_dashboard(user: User = Depends(get_current_user)):
                     {"$sort": {"created_at": -1}},
                     {"$limit": 10},
                     {"$project": {
+                        "_id": 0,
                         "id": {"$toString": "$_id"},
                         "title": 1,
                         "severity": 1,
@@ -75,6 +82,7 @@ async def get_dashboard(user: User = Depends(get_current_user)):
                     {"$sort": {"created_at": -1}},
                     {"$limit": 5},
                     {"$project": {
+                        "_id": 0,
                         "id": {"$toString": "$_id"},
                         "title": 1,
                         "severity": 1,
