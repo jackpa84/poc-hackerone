@@ -15,12 +15,15 @@ Exemplo de config do job:
   }
 """
 import asyncio
+import logging
 from datetime import datetime
 from pathlib import Path
 from bson import ObjectId
 
 from app.models.job import Job
-from app.models.finding import Finding
+from app.services.dedup import finding_exists_or_create
+
+logger = logging.getLogger(__name__)
 
 WORDLISTS_DIR = Path("/app/tools/wordlists")
 
@@ -175,7 +178,7 @@ async def task_run_dns_recon(ctx, job_id: str):
         await job.save()
 
         all_records: dict[str, list[str]] = {}
-        auto_findings = []
+        created_findings = 0
 
         # ── Etapa 1: Resolver registros DNS do domínio ──────────────────
         for rtype in record_types:
@@ -207,7 +210,7 @@ async def task_run_dns_recon(ctx, job_id: str):
             if "V=SPF1" in upper:
                 has_spf = True
                 if "+ALL" in upper:
-                    finding = Finding(
+                    f = await finding_exists_or_create(
                         user_id=job.user_id,
                         program_id=job.program_id,
                         target_id=job.target_id,
@@ -224,12 +227,13 @@ async def task_run_dns_recon(ctx, job_id: str):
                         steps_to_reproduce=f"1. Execute: `dig TXT {domain}`\n2. Observe o registro SPF com +all",
                         impact="Permite email spoofing, phishing e bypass de filtros anti-spam.",
                     )
-                    auto_findings.append(finding)
+                    if f:
+                        created_findings += 1
             if "_DMARC" in upper or "DMARC" in upper:
                 has_dmarc = True
 
         if not has_spf:
-            finding = Finding(
+            f = await finding_exists_or_create(
                 user_id=job.user_id,
                 program_id=job.program_id,
                 target_id=job.target_id,
@@ -242,7 +246,8 @@ async def task_run_dns_recon(ctx, job_id: str):
                 steps_to_reproduce=f"1. Execute: `dig TXT {domain}`\n2. Note a ausência de registro SPF",
                 impact="Sem SPF, emails podem ser forjados em nome do domínio sem restrição.",
             )
-            auto_findings.append(finding)
+            if f:
+                created_findings += 1
 
         # ── Etapa 3: Brute-force de subdomínios via DNS ─────────────────
         job.logs.append("[dns_recon] Brute-force de subdomínios via DNS...")
@@ -269,16 +274,15 @@ async def task_run_dns_recon(ctx, job_id: str):
 
         job.logs.append(f"[dns_recon] {len(resolved_subs)} subdomínios resolvidos via DNS")
 
-        if auto_findings:
-            await Finding.insert_many(auto_findings)
-            job.logs.append(f"[dns_recon] {len(auto_findings)} findings de misconfigurações DNS criados")
+        if created_findings:
+            job.logs.append(f"[dns_recon] {created_findings} findings de misconfigurações DNS criados")
 
         job.status = "completed"
         job.finished_at = datetime.utcnow()
         job.result_summary = {
             "records_found": {k: len(v) for k, v in all_records.items()},
             "dns_subdomains": len(resolved_subs),
-            "misconfig_findings": len(auto_findings),
+            "misconfig_findings": created_findings,
         }
         job.logs.append("[dns_recon] Concluído!")
         await job.save()

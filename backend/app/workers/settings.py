@@ -20,11 +20,14 @@ Pipeline de automação completo (tudo automático):
   [Workers]  task_auto_pipeline        → gera relatório IA + submete ao HackerOne
   [Startup]  task_seed_programs        → popula novos usuários com 13 programas curados
 """
+import logging
 from arq.connections import RedisSettings
 from arq.cron import cron
 
 from app.config import settings
 from app.database import init_db
+
+logger = logging.getLogger(__name__)
 
 # ── Workers executados manualmente ou pelo scheduler ──────────────────────
 from app.workers.recon           import task_run_recon
@@ -52,17 +55,26 @@ from app.workers.auto_sync  import (                      # H1 sync + pipeline s
 
 async def startup(ctx):
     """Inicializa o MongoDB e dispara sync inicial ao subir o worker."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     await init_db()
-    print("[worker] MongoDB inicializado.")
+    logger.info("[worker] MongoDB inicializado.")
 
     # Dispara sync do H1 imediatamente ao subir (não espera o cron de 6h)
     redis = ctx.get("redis")
     if redis:
         try:
             await redis.enqueue_job("task_auto_h1_sync")
-            print("[worker] Sync H1 inicial enfileirado.")
+            logger.info("[worker] Sync H1 inicial enfileirado.")
         except Exception as e:
-            print(f"[worker] Não foi possível enfileirar sync H1: {e}")
+            logger.warning("[worker] Não foi possível enfileirar sync H1: %s", e)
+
+
+async def shutdown(ctx):
+    """Graceful shutdown: loga o encerramento para rastreabilidade."""
+    logger.info("[worker] Worker encerrando — jobs em execução serão retomados na próxima inicialização.")
 
 
 class WorkerSettings:
@@ -95,8 +107,8 @@ class WorkerSettings:
     ]
 
     cron_jobs = [
-        # Recon automático: a cada 5 minutos
-        cron(task_auto_scheduler, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, timeout=300),
+        # Recon automático: a cada hora (targets têm threshold de 24h)
+        cron(task_auto_scheduler, minute=0, timeout=300),
 
         # Sincronização com HackerOne: a cada 6 horas
         cron(task_auto_h1_sync, hour={0, 6, 12, 18}, minute=5, timeout=600),
@@ -105,6 +117,7 @@ class WorkerSettings:
         cron(task_auto_pipeline_sweep, minute={10, 40}, timeout=300),
     ]
 
-    on_startup = startup
-    max_jobs   = 10
+    on_startup  = startup
+    on_shutdown = shutdown
+    max_jobs    = settings.MAX_JOBS
     job_timeout = 5400   # 1.5h por tarefa (nuclei/sqlmap podem demorar)

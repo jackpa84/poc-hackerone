@@ -7,6 +7,7 @@ Exemplos: "shopify.com", "*.shopify.com", "1.2.3.4/24"
 from datetime import datetime
 from typing import Optional
 from beanie import Document
+from pymongo import IndexModel, ASCENDING
 
 
 class Target(Document):
@@ -23,4 +24,11 @@ class Target(Document):
 
     class Settings:
         name = "targets"
-        indexes = ["program_id", "user_id"]
+        indexes = [
+            "user_id",
+            "program_id",
+            # Compound: busca por valor dentro de um programa (evita duplicatas no sync)
+            IndexModel([("program_id", ASCENDING), ("value", ASCENDING)], unique=True, sparse=True),
+            # Compound: scheduler — targets por usuário + scope + data do recon
+            IndexModel([("user_id", ASCENDING), ("is_in_scope", ASCENDING), ("last_recon_at", ASCENDING)]),
+        ]

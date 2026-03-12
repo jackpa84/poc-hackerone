@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Shield, Target, Bug,
-  LayoutDashboard, LogOut, ChevronRight, BookOpen, SendHorizonal, Activity, Bot,
+  LayoutDashboard, LogOut, ChevronRight, BookOpen, SendHorizonal, Activity, Bot, Boxes, ShieldAlert, Inbox,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -16,7 +16,10 @@ const NAV_ITEMS = [
   { href: '/pipeline',   label: 'Pipeline',   icon: SendHorizonal },
   { href: '/report-guide', label: 'Guia Report', icon: BookOpen },
   { href: '/ai',           label: 'AI Assistant', icon: Bot },
-  { href: '/health',       label: 'Status',       icon: Activity },
+  { href: '/health',        label: 'Status',        icon: Activity },
+  { href: '/architecture',    label: 'Arquitetura',   icon: Boxes },
+  { href: '/vuln-types',      label: 'Tipos de Vuln', icon: ShieldAlert },
+  { href: '/hackerone',       label: 'H1 Inbox',      icon: Inbox },
 ]
 
 export function Sidebar() {

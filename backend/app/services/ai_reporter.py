@@ -81,7 +81,7 @@ async def _generate_ollama(prompt: str) -> tuple[str, int, int]:
     """Chama o Ollama local via REST API."""
     url = f"{settings.OLLAMA_URL.rstrip('/')}/api/generate"
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=settings.OLLAMA_TIMEOUT) as client:
         resp = await client.post(url, json={
             "model": settings.OLLAMA_MODEL,
             "prompt": prompt,

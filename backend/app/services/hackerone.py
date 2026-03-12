@@ -7,6 +7,7 @@ from typing import Any
 from app.config import settings
 
 _BASE    = "https://api.hackerone.com/v1/hackers"
+_BASE_V1 = "https://api.hackerone.com/v1"
 _TIMEOUT = 20
 
 
@@ -34,6 +35,19 @@ async def _post(path: str, payload: dict) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(
             f"{_BASE}{path}",
+            auth=_auth(),
+            json=payload,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _post_v1(path: str, payload: dict) -> dict[str, Any]:
+    """POST para endpoints fora do prefixo /hackers (ex: /v1/reports/{id}/add_comment)."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(
+            f"{_BASE_V1}{path}",
             auth=_auth(),
             json=payload,
             headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -95,3 +109,27 @@ async def submit_report(
 
 async def get_earnings(page: int = 1, size: int = 25) -> dict:
     return await _get("/me/earnings", {"page[number]": page, "page[size]": size})
+
+
+async def get_inbox(page: int = 1, size: int = 25, state: str = "") -> dict:
+    """Lista relatórios do hacker com filtro opcional por estado (inbox)."""
+    params: dict[str, Any] = {"page[number]": page, "page[size]": size}
+    if state:
+        params["filter[state][]"] = state
+    return await _get("/me/reports", params)
+
+
+async def get_report_full(report_id: int) -> dict:
+    """Retorna o relatório completo incluindo activities (thread de conversa)."""
+    return await _get(f"/reports/{report_id}")
+
+
+async def reply_to_report(report_id: int, message: str) -> dict:
+    """Adiciona um comentário (reply) a um relatório no HackerOne."""
+    payload = {
+        "data": {
+            "type": "activity-comment",
+            "attributes": {"message": message},
+        }
+    }
+    return await _post_v1(f"/reports/{report_id}/add_comment", payload)

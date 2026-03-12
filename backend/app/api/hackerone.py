@@ -210,6 +210,66 @@ async def get_earnings(page: int = Query(1, ge=1), size: int = Query(25, ge=1, l
         raise HTTPException(status_code=502, detail=str(exc))
 
 
+# ── Inbox ─────────────────────────────────────────────────────────────────
+
+@router.get("/inbox")
+async def get_inbox(
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=100),
+    state: str = Query(""),
+    user: User = Depends(get_current_user),
+):
+    """Lista caixa postal do hacker — relatórios com filtro por estado."""
+    _require_h1()
+    t0 = time.monotonic()
+    try:
+        result = await h1.get_inbox(page, size, state)
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox", f"{len(result.get('data', []))} reports (state={state or 'all'})",
+                   {"page": page, "state": state}, duration_ms=ms)
+        return result
+    except Exception as exc:
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox", "Erro", error=str(exc), duration_ms=ms)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/inbox/{report_id}")
+async def get_inbox_report(report_id: int, user: User = Depends(get_current_user)):
+    """Retorna relatório completo com thread de atividades (conversa)."""
+    _require_h1()
+    t0 = time.monotonic()
+    try:
+        result = await h1.get_report_full(report_id)
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox_view", f"#{report_id}", {"report_id": report_id}, duration_ms=ms)
+        return result
+    except Exception as exc:
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox_view", f"Erro #{report_id}", {"report_id": report_id}, error=str(exc), duration_ms=ms)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+class ReplyRequest(BaseModel):
+    message: str
+
+
+@router.post("/inbox/{report_id}/reply")
+async def reply_to_report(report_id: int, data: ReplyRequest, user: User = Depends(get_current_user)):
+    """Envia uma resposta/comentário a um relatório no HackerOne."""
+    _require_h1()
+    t0 = time.monotonic()
+    try:
+        result = await h1.reply_to_report(report_id, data.message)
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox_reply", f"#{report_id}", {"report_id": report_id}, duration_ms=ms)
+        return result
+    except Exception as exc:
+        ms = int((time.monotonic() - t0) * 1000)
+        await _log(str(user.id), "inbox_reply", f"Erro #{report_id}", {"report_id": report_id}, error=str(exc), duration_ms=ms)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 # ── Status ────────────────────────────────────────────────────────────────
 
 @router.get("/status")

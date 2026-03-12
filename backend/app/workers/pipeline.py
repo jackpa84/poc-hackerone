@@ -154,13 +154,62 @@ async def task_auto_pipeline(ctx, job_id: str):
     await _update_job(job, f"Score de prontidão: {score}% ({checks_passed}/{checks_total} critérios)")
     await ev.pipeline_step(job.user_id, job_id, "readiness", f"Score: {score}%", score=score)
 
+    # ── Passo 5: Submeter ao HackerOne (se aprovado e score >= 70) ───────
+    h1_report_id = None
+    submitted = False
+    team_handle = job.config.get("team_handle")
+
+    should_submit = (
+        review is not None and review.approved
+        and score >= 70
+        and bool(team_handle)
+    )
+
+    if should_submit:
+        await _update_job(job, f"Submetendo ao HackerOne (@{team_handle})...")
+        try:
+            from app.services import hackerone as h1
+
+            severity_map = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
+            severity_rating = severity_map.get(finding.severity, "none")
+
+            result = await h1.submit_report(
+                team_handle=team_handle,
+                title=finding.title,
+                vulnerability_information=report.content_markdown,
+                impact=finding.impact or "Ver relatório completo.",
+                severity_rating=severity_rating,
+            )
+            h1_report_id = result.get("data", {}).get("id")
+            submitted = True
+            await _update_job(job, f"✅ Report #{h1_report_id} enviado ao HackerOne com sucesso!")
+            await ev.pipeline_step(
+                job.user_id, job_id, "submitted",
+                f"Report #{h1_report_id} submetido ao HackerOne",
+                score=score,
+            )
+        except Exception as e:
+            logger.warning("[pipeline] Submissão H1 falhou para job=%s: %s", job_id, e)
+            await _update_job(job, f"⚠ Submissão ao HackerOne falhou: {e}")
+    else:
+        reasons = []
+        if not team_handle:
+            reasons.append("team_handle não configurado")
+        if review and not review.approved:
+            reasons.append(f"revisão reprovada (score {review.quality_score}/100)")
+        if score < 70:
+            reasons.append(f"score de prontidão insuficiente ({score}%)")
+        await _update_job(job, f"Submissão pulada — {'; '.join(reasons) or 'condições não atendidas'}")
+
     # ── Finalizar ─────────────────────────────────────────────────────────
     job.result_summary = {
         "score": score,
         "review_score": review.quality_score if review else None,
         "review_approved": review.approved if review else None,
+        "submitted": submitted,
+        "h1_report_id": h1_report_id,
     }
     job.status = "completed"
     job.finished_at = datetime.utcnow()
-    await _update_job(job, f"Pipeline concluído com score {score}%", "completed")
+    await _update_job(job, f"Pipeline concluído — score {score}% | enviado={submitted}", "completed")
     await job.save()

@@ -1,10 +1,17 @@
+import logging
 from datetime import datetime
+from typing import Optional
+
+from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 
 from app.models.finding import Finding
 from app.models.user import User
 from app.schemas.finding import FindingCreate, FindingUpdate, FindingResponse
 from app.dependencies import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/findings", tags=["findings"])
 
@@ -40,14 +47,23 @@ async def list_findings(
 
 @router.get("/stats")
 async def findings_stats(user: User = Depends(get_current_user)):
-    """Retorna contagens por severidade e status (para o dashboard)."""
-    findings = await Finding.find(Finding.user_id == str(user.id)).to_list()
-    severity_counts = {}
-    status_counts = {}
-    for f in findings:
-        severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
-        status_counts[f.status]     = status_counts.get(f.status, 0) + 1
-    return {"by_severity": severity_counts, "by_status": status_counts, "total": len(findings)}
+    """Retorna contagens por severidade e status usando aggregation pipeline."""
+    uid = str(user.id)
+    result = await Finding.aggregate([
+        {"$match": {"user_id": uid}},
+        {"$facet": {
+            "by_severity": [{"$group": {"_id": "$severity", "count": {"$sum": 1}}}],
+            "by_status":   [{"$group": {"_id": "$status",   "count": {"$sum": 1}}}],
+            "total":       [{"$count": "n"}],
+        }},
+    ]).to_list()
+
+    facet = result[0] if result else {}
+    return {
+        "by_severity": {item["_id"]: item["count"] for item in facet.get("by_severity", [])},
+        "by_status":   {item["_id"]: item["count"] for item in facet.get("by_status", [])},
+        "total":       (facet.get("total") or [{"n": 0}])[0].get("n", 0),
+    }
 
 
 @router.post("", response_model=FindingResponse, status_code=201)
@@ -64,9 +80,60 @@ async def create_finding(data: FindingCreate, user: User = Depends(get_current_u
     return to_response(finding)
 
 
+# ── Bulk update ────────────────────────────────────────────────────────────────
+
+class BulkUpdateRequest(BaseModel):
+    ids: list[str]
+    status: Optional[str] = None
+    severity: Optional[str] = None
+
+class BulkUpdateResponse(BaseModel):
+    updated: int
+    skipped: int
+
+
+@router.patch("/bulk", response_model=BulkUpdateResponse)
+async def bulk_update_findings(data: BulkUpdateRequest, user: User = Depends(get_current_user)):
+    """Atualiza status e/ou severity de múltiplos findings de uma vez."""
+    if not data.ids:
+        raise HTTPException(status_code=422, detail="Forneça ao menos um ID")
+    if not data.status and not data.severity:
+        raise HTTPException(status_code=422, detail="Forneça status e/ou severity para atualizar")
+
+    valid_statuses = ("new", "triaging", "accepted", "resolved", "duplicate", "not_applicable")
+    valid_severities = ("critical", "high", "medium", "low", "informational")
+    if data.status and data.status not in valid_statuses:
+        raise HTTPException(status_code=422, detail=f"status inválido: {valid_statuses}")
+    if data.severity and data.severity not in valid_severities:
+        raise HTTPException(status_code=422, detail=f"severity inválida: {valid_severities}")
+
+    uid = str(user.id)
+    updated = 0
+    skipped = 0
+
+    for fid in data.ids:
+        try:
+            f = await Finding.get(ObjectId(fid))
+            if not f or f.user_id != uid:
+                skipped += 1
+                continue
+            patch: dict = {"updated_at": datetime.utcnow()}
+            if data.status:
+                patch["status"] = data.status
+            if data.severity:
+                patch["severity"] = data.severity
+            await f.set(patch)
+            updated += 1
+        except Exception:
+            skipped += 1
+
+    return BulkUpdateResponse(updated=updated, skipped=skipped)
+
+
+# ── CRUD individual ────────────────────────────────────────────────────────────
+
 @router.get("/{finding_id}", response_model=FindingResponse)
 async def get_finding(finding_id: str, user: User = Depends(get_current_user)):
-    from bson import ObjectId
     f = await Finding.get(ObjectId(finding_id))
     if not f or f.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
@@ -75,22 +142,56 @@ async def get_finding(finding_id: str, user: User = Depends(get_current_user)):
 
 @router.patch("/{finding_id}", response_model=FindingResponse)
 async def update_finding(finding_id: str, data: FindingUpdate, user: User = Depends(get_current_user)):
-    from bson import ObjectId
+    from app.models.job import Job
+
     f = await Finding.get(ObjectId(finding_id))
     if not f or f.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
+
+    prev_status = f.status
     update = data.model_dump(exclude_none=True)
     if "cvss_score" in update and update["cvss_score"] is not None:
         if not (0.0 <= update["cvss_score"] <= 10.0):
             raise HTTPException(status_code=422, detail="cvss_score deve estar entre 0.0 e 10.0")
     update["updated_at"] = datetime.utcnow()
     await f.set(update)
+
+    # Disparo event-driven: finding aceito → enfileira pipeline imediatamente
+    new_status = update.get("status")
+    if new_status == "accepted" and prev_status != "accepted":
+        has_active = await Job.find_one(
+            {"config.finding_id": finding_id},
+            Job.type == "pipeline",
+            Job.status.in_(["pending", "running", "completed"]),  # type: ignore[attr-defined]
+        )
+        if not has_active:
+            try:
+                from arq import create_pool
+                from arq.connections import RedisSettings
+                from app.config import settings as app_settings
+                job = Job(
+                    user_id=str(user.id),
+                    program_id=f.program_id or "",
+                    type="pipeline",
+                    status="pending",
+                    config={"finding_id": finding_id, "auto": True, "trigger": "status_accepted"},
+                    logs=[f"[{datetime.utcnow().strftime('%H:%M:%S')}] Pipeline disparado ao aceitar finding"],
+                )
+                await job.insert()
+                redis = await create_pool(RedisSettings.from_dsn(app_settings.REDIS_URL))
+                arq_job = await redis.enqueue_job("task_auto_pipeline", str(job.id))
+                if arq_job:
+                    job.arq_job_id = arq_job.job_id
+                    await job.save()
+                await redis.aclose()
+            except Exception as e:
+                logger.error("[findings] Erro ao enfileirar pipeline para %s: %s", finding_id, e)
+
     return to_response(f)
 
 
 @router.delete("/{finding_id}", status_code=204)
 async def delete_finding(finding_id: str, user: User = Depends(get_current_user)):
-    from bson import ObjectId
     f = await Finding.get(ObjectId(finding_id))
     if not f or f.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
@@ -103,7 +204,6 @@ async def finding_readiness(finding_id: str, user: User = Depends(get_current_us
     Avalia o grau de prontidão de um finding para submissão.
     Retorna score (0-100), checklist de itens, pontos faltantes e sugestões.
     """
-    from bson import ObjectId
     from app.models.report import Report
 
     f = await Finding.get(ObjectId(finding_id))

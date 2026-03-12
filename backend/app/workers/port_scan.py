@@ -18,11 +18,14 @@ Exemplo de config do job:
   }
 """
 import asyncio
+import logging
 from datetime import datetime
 from bson import ObjectId
 
 from app.models.job import Job
-from app.models.finding import Finding
+from app.services.dedup import finding_exists_or_create
+
+logger = logging.getLogger(__name__)
 
 
 SENSITIVE_PORTS = {
@@ -139,13 +142,14 @@ async def task_run_port_scan(ctx, job_id: str):
         job.logs.append(f"[port_scan] {len(open_ports)} portas abertas encontradas")
         await job.save()
 
-        auto_findings = []
+        created_findings = 0
+        skipped_findings = 0
         for entry in open_ports:
             port = entry["port"]
             host = entry["host"]
             if port in SENSITIVE_PORTS:
                 service, severity = SENSITIVE_PORTS[port]
-                finding = Finding(
+                f = await finding_exists_or_create(
                     user_id=job.user_id,
                     program_id=job.program_id,
                     target_id=job.target_id,
@@ -166,17 +170,20 @@ async def task_run_port_scan(ctx, job_id: str):
                     ),
                     impact=f"Exposição do serviço {service} na porta {port} pode levar a acesso não autorizado ou vazamento de informações.",
                 )
-                auto_findings.append(finding)
+                if f:
+                    created_findings += 1
+                else:
+                    skipped_findings += 1
 
-        if auto_findings:
-            await Finding.insert_many(auto_findings)
-            job.logs.append(f"[port_scan] {len(auto_findings)} findings automáticos criados para portas sensíveis")
+        job.logs.append(
+            f"[port_scan] {created_findings} findings criados, {skipped_findings} duplicatas ignoradas"
+        )
 
         job.status = "completed"
         job.finished_at = datetime.utcnow()
         job.result_summary = {
             "open_ports": len(open_ports),
-            "sensitive_ports": len(auto_findings),
+            "sensitive_ports": created_findings,
             "ports_list": [e["port"] for e in open_ports[:50]],
         }
         job.logs.append("[port_scan] Concluído!")

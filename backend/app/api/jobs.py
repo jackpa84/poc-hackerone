@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from arq import create_pool
@@ -10,6 +11,9 @@ from app.models.user import User
 from app.schemas.job import JobCreate, JobResponse
 from app.services.job_dispatcher import dispatch_job
 from app.dependencies import get_current_user
+from app import database
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -42,6 +46,47 @@ async def list_jobs(
     return [to_response(j) for j in jobs]
 
 
+@router.get("/queue/stats")
+async def queue_stats(user: User = Depends(get_current_user)):
+    """Retorna métricas da fila ARQ: jobs pendentes, em execução e workers ativos."""
+    r = database.redis_client
+    if not r:
+        raise HTTPException(status_code=503, detail="Redis indisponível")
+
+    try:
+        arq_keys = await r.keys("arq:*")
+        queued = 0
+        try:
+            queued = await r.zcard("arq:queue") if "arq:queue" in arq_keys else 0
+        except Exception:
+            pass
+
+        in_progress = len([k for k in arq_keys if ":in-progress" in k])
+        workers = len([k for k in arq_keys if "worker" in k])
+
+        # Stats do banco para o usuário atual
+        uid = str(user.id)
+        db_stats = await Job.aggregate([
+            {"$match": {"user_id": uid}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+        ]).to_list()
+
+        by_status = {item["_id"]: item["count"] for item in db_stats}
+
+        return {
+            "queue": {
+                "pending_arq": queued,
+                "in_progress_arq": in_progress,
+                "workers_active": workers,
+            },
+            "by_status": by_status,
+            "total": sum(by_status.values()),
+        }
+    except Exception as e:
+        logger.error("[jobs] Erro ao buscar queue stats: %s", e)
+        raise HTTPException(status_code=500, detail="Erro ao consultar fila")
+
+
 @router.post("", response_model=JobResponse, status_code=201)
 async def create_job(data: JobCreate, user: User = Depends(get_current_user)):
     """
@@ -69,13 +114,12 @@ async def create_job(data: JobCreate, user: User = Depends(get_current_user)):
     return to_response(job)
 
 
-
 @router.post("/{job_id}/cancel")
 async def cancel_job(job_id: str, user: User = Depends(get_current_user)):
     """
     Cancela um job em execução ou pendente.
-    - Se pending: muda status para 'failed' sem executar
-    - Se running:  tenta abortar via ARQ e muda status para 'failed'
+    - Se pending: muda status para 'cancelled' sem executar
+    - Se running:  tenta abortar via ARQ e muda status para 'cancelled'
     """
     from bson import ObjectId
     job = await Job.get(ObjectId(job_id))
@@ -91,8 +135,8 @@ async def cancel_job(job_id: str, user: User = Depends(get_current_user)):
             redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
             await redis.abort_job(job.arq_job_id)
             await redis.aclose()
-        except Exception:
-            pass  # Mesmo que falhe no ARQ, marcamos como cancelled no banco
+        except Exception as e:
+            logger.warning("[jobs] Não foi possível abortar job ARQ %s: %s", job.arq_job_id, e)
 
     job.status = "cancelled"
     job.error = "Cancelado pelo usuário"

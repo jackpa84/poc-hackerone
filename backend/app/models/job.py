@@ -20,6 +20,7 @@ Fluxo:
 from datetime import datetime
 from typing import Optional, Any
 from beanie import Document
+from pymongo import IndexModel, ASCENDING, DESCENDING
 
 
 class Job(Document):
@@ -29,7 +30,7 @@ class Job(Document):
 
     # Tipo e estado
     type: str                             # "recon" | "dir_fuzz" | "param_fuzz" | "sub_fuzz" | "idor" | "port_scan" | "dns_recon"
-    status: str = "pending"              # "pending" | "running" | "completed" | "failed"
+    status: str = "pending"              # "pending" | "running" | "completed" | "failed" | "cancelled"
 
     # Configuração específica do job (flexível por tipo)
     config: dict[str, Any] = {}
@@ -52,4 +53,15 @@ class Job(Document):
 
     class Settings:
         name = "jobs"
-        indexes = ["user_id", "program_id", "status", "created_at"]
+        indexes = [
+            # Queries simples
+            "user_id",
+            "status",
+            "created_at",
+            # Compound: listagem por usuário + programa
+            IndexModel([("user_id", ASCENDING), ("program_id", ASCENDING), ("created_at", DESCENDING)]),
+            # Compound: dedup de jobs pendentes/rodando por target
+            IndexModel([("target_id", ASCENDING), ("type", ASCENDING), ("status", ASCENDING)]),
+            # Compound: pipeline sweep — busca por finding_id dentro do config
+            IndexModel([("config.finding_id", ASCENDING), ("type", ASCENDING), ("status", ASCENDING)]),
+        ]

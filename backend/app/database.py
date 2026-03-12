@@ -10,6 +10,7 @@ from app.models.job import Job
 from app.models.finding import Finding
 from app.models.report import Report
 from app.models.hackerone_log import HackerOneLog
+from app.models.comment import Comment
 
 redis_client: redis.Redis = None
 
@@ -26,5 +27,5 @@ async def init_db():
     client = AsyncIOMotorClient(settings.MONGO_URI)
     await init_beanie(
         database=client.bugbounty,
-        document_models=[User, Program, Target, Job, Finding, Report, HackerOneLog],
+        document_models=[User, Program, Target, Job, Finding, Report, HackerOneLog, Comment],
     )

@@ -209,25 +209,12 @@ async def task_auto_pipeline_sweep(ctx):
     for finding in accepted_findings:
         fid = str(finding.id)
 
-        # Verifica se já tem pipeline rodando ou concluído para este finding
-        existing = await Job.find_one(
-            Job.user_id == finding.user_id,
+        # Filtra diretamente no banco pelo finding_id dentro do config
+        has_active = await Job.find_one(
+            {"config.finding_id": fid},
             Job.type == "pipeline",
+            Job.status.in_(["pending", "running", "completed"]),  # type: ignore[attr-defined]
         )
-
-        # Filtra pelo finding_id no config
-        has_active = False
-        if existing:
-            all_pipeline = await Job.find(
-                Job.user_id == finding.user_id,
-                Job.type == "pipeline",
-            ).to_list()
-
-            for pj in all_pipeline:
-                if pj.config.get("finding_id") == fid:
-                    if pj.status in ("pending", "running", "completed"):
-                        has_active = True
-                        break
 
         if has_active:
             continue

@@ -11,11 +11,13 @@ Severidades seguem o padrão de bug bounty:
   low      → Open redirect, informação pouco sensível
   info     → Exposição de versão, header de segurança ausente
 """
+import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any
 from beanie import Document
 from beanie.odm.actions import before_event, EventTypes
-import asyncio
+from pymongo import IndexModel, ASCENDING, DESCENDING
+
 
 class Finding(Document):
     user_id: str
@@ -53,8 +55,17 @@ class Finding(Document):
     bounty_amount: Optional[float] = None  # Preenchido após pagamento
     reported_at: Optional[datetime] = None
 
+    # Hash para deduplicação automática (title + affected_url + user_id)
+    content_hash: Optional[str] = None
+
     created_at: datetime = datetime.utcnow()
     updated_at: datetime = datetime.utcnow()
+
+    @staticmethod
+    def build_hash(user_id: str, title: str, affected_url: str) -> str:
+        """Gera hash determinístico para deduplicação de findings automáticos."""
+        raw = f"{user_id}|{title.lower().strip()}|{affected_url.lower().strip()}"
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     @property
     def severity_order(self) -> int:
@@ -89,4 +100,16 @@ class Finding(Document):
 
     class Settings:
         name = "findings"
-        indexes = ["user_id", "program_id", "severity", "status", "type", "created_at"]
+        indexes = [
+            # Queries simples
+            "user_id",
+            "severity",
+            "status",
+            "type",
+            "created_at",
+            # Compound: listagem filtrada por usuário
+            IndexModel([("user_id", ASCENDING), ("program_id", ASCENDING), ("created_at", DESCENDING)]),
+            IndexModel([("user_id", ASCENDING), ("severity", ASCENDING), ("status", ASCENDING)]),
+            # Deduplicação: único por hash dentro do user
+            IndexModel([("content_hash", ASCENDING)], sparse=True),
+        ]

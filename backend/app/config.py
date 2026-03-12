@@ -4,8 +4,10 @@ config.py — Configurações globais da aplicação
 Pydantic-settings lê automaticamente do arquivo .env ou variáveis de ambiente.
 Acesse em qualquer lugar com: from app.config import settings
 """
-import warnings
+import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -27,11 +29,18 @@ class Settings(BaseSettings):
     # Ollama — modelo local (prioridade sobre Claude)
     OLLAMA_URL: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL: str = "xploiter/the-xploiter:latest"
+    OLLAMA_TIMEOUT: int = 30  # segundos antes de fazer fallback para Claude
 
     # HackerOne API (aceita ambos os nomes de variável)
     HACKERONE_USERNAME: str = ""      # compatibilidade legada
     HACKERONE_API_USERNAME: str = ""  # nome preferido
     HACKERONE_API_TOKEN: str = ""
+
+    # Worker — número máximo de jobs concorrentes por instância
+    MAX_JOBS: int = 10
+
+    # Rate limiting — requisições por minuto por IP
+    RATE_LIMIT_PER_MINUTE: int = 120
 
     @property
     def h1_username(self) -> str:
@@ -40,17 +49,21 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def validate_security(self) -> None:
-        """Emite avisos para configurações inseguras."""
+        """Loga avisos para configurações inseguras ou incompletas."""
         weak_jwt = "dev-secret-change-in-production"
         if self.JWT_SECRET == weak_jwt or len(self.JWT_SECRET) < 32:
-            warnings.warn(
-                "[SECURITY] JWT_SECRET fraco ou padrão! Defina um segredo forte (≥32 chars) no .env",
-                stacklevel=2,
+            logger.warning(
+                "[SECURITY] JWT_SECRET fraco ou padrão! Defina um segredo forte (>=32 chars) no .env"
             )
         if not self.ANTHROPIC_API_KEY:
-            warnings.warn(
-                "[CONFIG] ANTHROPIC_API_KEY não configurada. Geração de relatórios com IA estará indisponível.",
-                stacklevel=2,
+            logger.warning(
+                "[CONFIG] ANTHROPIC_API_KEY não configurada. "
+                "Geração de relatórios com IA usará apenas Ollama."
+            )
+        if not self.HACKERONE_API_TOKEN:
+            logger.warning(
+                "[CONFIG] HACKERONE_API_TOKEN não configurada. "
+                "Integração com HackerOne estará indisponível."
             )
 
 

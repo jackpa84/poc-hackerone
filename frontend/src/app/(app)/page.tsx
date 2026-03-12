@@ -64,6 +64,29 @@ interface AiReport {
   completion_tokens?: number
 }
 
+interface H1Report {
+  id: string
+  type: string
+  attributes: {
+    title: string
+    state: string
+    severity_rating: string
+    created_at: string
+    team_handle?: string
+    bounty_amount?: string
+  }
+}
+
+interface H1LogEntry {
+  id: string
+  action: string
+  status: string
+  detail: string
+  error: string | null
+  duration_ms: number | null
+  created_at: string
+}
+
 interface AnalysisCheck {
   key: string
   label: string
@@ -586,7 +609,161 @@ const TYPE_LABEL: Record<string, string> = {
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational']
 
-// ── KPI Tooltip definitions ────────────────────────────────────────────────
+// ── Main Component ─────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const [data, setData]               = useState<DashboardData | null>(null)
+  const [allFindings, setAllFindings] = useState<FindingItem[]>([])
+  const [h1Reports, setH1Reports]     = useState<H1Report[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [selectedFinding, setSelectedFinding] = useState<FindingItem | null>(null)
+  const rt = useRealtimeContext()
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const [dashRes, findingsRes] = await Promise.all([
+        api.get('/dashboard'),
+        api.get('/findings'),
+      ])
+      setData(dashRes.data)
+      setAllFindings(findingsRes.data)
+      try {
+        const h1Res = await api.get('/hackerone/inbox?size=8')
+        setH1Reports(h1Res.data?.data ?? [])
+      } catch { /* sem credenciais H1 */ }
+    } catch { setData(null) } finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    if (!rt.heartbeat) return
+    setData(prev => prev ? {
+      ...prev,
+      total_findings: rt.heartbeat!.total_findings,
+      active_jobs:    rt.heartbeat!.active_jobs,
+      by_severity:    rt.heartbeat!.by_severity,
+      by_status:      rt.heartbeat!.by_status,
+      recent_jobs:    rt.heartbeat!.recent_jobs as unknown as JobItem[],
+    } : prev)
+  }, [rt.heartbeat])
+
+  useEffect(() => {
+    if (rt.findingEvents.length === 0) return
+    api.get('/findings').then(r => setAllFindings(r.data)).catch(() => {})
+  }, [rt.findingEvents.length])
+
+  // Derived
+  const bySev      = data?.by_severity ?? {}
+  const sevKeys    = ['critical', 'high', 'medium', 'low', 'informational']
+  const totalBySev = sevKeys.reduce((s, k) => s + (bySev[k] ?? 0), 0)
+  const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, informational: 4 }
+
+  const priorityFindings = [...allFindings]
+    .filter(f => f.status === 'new' || f.status === 'triaging')
+    .sort((a, b) => (sevOrder[a.severity] ?? 4) - (sevOrder[b.severity] ?? 4))
+    .slice(0, 8)
+
+  const readyToReport = allFindings.filter(f => f.status === 'accepted')
+  const recentJobs    = data?.recent_jobs ?? []
+  const activeJobs    = recentJobs.filter(j => j.status === 'running' || j.status === 'pending')
+  const doneJobs      = recentJobs.filter(j => j.status === 'completed' || j.status === 'failed').slice(0, 4)
+
+  const critHigh   = (bySev.critical ?? 0) + (bySev.high ?? 0)
+  const inScope    = data?.targets_in_scope ?? 0
+  const readyCount = readyToReport.length
+
+  if (loading) return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="h-8 w-8 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {Array.from({ length: 5 }).map((_, i) => <SkeletonKPI key={i} />)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3 space-y-2">{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+        <div className="lg:col-span-2 space-y-2">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+            {rt.connected && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-medium"
+                style={{ background: 'rgba(52,211,153,0.07)', borderColor: 'rgba(52,211,153,0.2)', color: '#34d399' }}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                live
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
+          </p>
+        </div>
+        <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors">
+          <RefreshCw size={14} className="text-muted-foreground" />
+        </button>
+      </div>
+
+      {/* ── Smart Action Banner ──────────────────────────────────────────── */}
+      {inScope === 0
+        ? <DashBanner v="blue"   icon={<Crosshair size={13} />} text={<>Nenhum target in-scope. <Link href="/programs" className="font-semibold underline">Adicione programas</Link> para o recon automático iniciar.</>} />
+        : readyCount > 0
+        ? <DashBanner v="violet" icon={<CheckCircle2 size={13} />} text={<><strong>{readyCount} finding{readyCount > 1 ? 's' : ''}</strong> pronto{readyCount > 1 ? 's' : ''} para relatório. <Link href="/pipeline" className="font-semibold underline">Abrir Pipeline →</Link></>} />
+        : critHigh > 0
+        ? <DashBanner v="orange" icon={<AlertCircle size={13} />} text={<><strong>{critHigh} Critical/High</strong> aguardam triagem. <Link href="/findings" className="font-semibold underline">Revisar Findings →</Link></>} />
+        : (data?.active_jobs ?? 0) > 0
+        ? <DashBanner v="emerald" icon={<Zap size={13} />} text={<><strong>{data!.active_jobs} job{data!.active_jobs > 1 ? 's' : ''}</strong> de recon em execução — novos findings detectados em tempo real.</>} />
+        : null
+      }
+
+      {/* ── KPI Strip ───────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <DashKpi icon={<Bug size={14} />}          bg="bg-red-500/10"    color="text-red-400"    label="Total Bugs"      value={data?.total_findings ?? 0}                         href="/findings" />
+        <DashKpi icon={<DollarSign size={14} />}   bg="bg-emerald-500/10" color="text-emerald-400" label="Bounty Ganho"   value={`$${(data?.bounty_earned ?? 0).toLocaleString()}`} />
+        <DashKpi icon={<Crosshair size={14} />}    bg="bg-blue-500/10"   color="text-blue-400"   label="In-Scope"        value={data?.targets_in_scope ?? 0} />
+        <DashKpi icon={<Zap size={14} />}          bg="bg-yellow-500/10" color="text-yellow-400" label="Jobs Ativos"     value={data?.active_jobs ?? 0}                            href="/jobs"     pulse={!!(data?.active_jobs)} />
+        <DashKpi icon={<CheckCircle2 size={14} />} bg="bg-violet-500/10" color="text-violet-400" label="Prontos p/ Report" value={readyCount}                                     href="/pipeline" accent={readyCount > 0} />
+      </div>
+
+      {/* ── Severity Breakdown ──────────────────────────────────────────── */}
+      <DashSeverityBar bySev={bySev} total={totalBySev} />
+
+      {/* ── Main 2-col Grid ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3">
+          <DashPriorityQueue findings={priorityFindings} onSelect={setSelectedFinding} />
+        </div>
+        <div className="lg:col-span-2 space-y-4">
+          <DashReadyToReport findings={readyToReport.slice(0, 5)} />
+          <DashJobsFeed jobs={[...activeJobs, ...doneJobs].slice(0, 6)} />
+        </div>
+      </div>
+
+      {/* ── Bottom Row ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <DashH1Inbox reports={h1Reports} />
+        <SystemActivityLog rt={rt} recentJobs={recentJobs} />
+      </div>
+
+      {selectedFinding && (
+        <ReportDrawer finding={selectedFinding} onClose={() => setSelectedFinding(null)} />
+      )}
+    </div>
+  )
+}
+
+// ── KPI Tooltip definitions (legacy, unused) ───────────────────────────────
 
 function getKpiTooltip(
   type: 'bugs' | 'bounty' | 'targets' | 'jobs' | 'ready',
@@ -754,17 +931,17 @@ function getSeverityTooltip(sev: string, count: number, data: DashboardData | nu
   }
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────
+// ── Old DashboardPage removed — new version above ──────────────────────────
 
-export default function DashboardPage() {
+function _OldDashboardPage_Removed() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [allFindings, setAllFindings] = useState<FindingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [sevFilter, setSevFilter] = useState<string | null>(null)
   const [selectedFinding, setSelectedFinding] = useState<FindingItem | null>(null)
-
-  // AI Reports log
   const [aiReports, setAiReports] = useState<AiReport[]>([])
+  const [h1Reports, setH1Reports] = useState<H1Report[]>([])
+  const [h1Logs, setH1Logs] = useState<H1LogEntry[]>([])
 
   // AI Analysis panel
   const [analyzing, setAnalyzing] = useState(false)
@@ -782,6 +959,16 @@ export default function DashboardPage() {
       setData(dashRes.data)
       setAllFindings(findingsRes.data)
       setAiReports(reportsRes.data ?? [])
+
+      // HackerOne inbox + logs (silently ignore if no credentials)
+      try {
+        const [h1Res, h1LogsRes] = await Promise.all([
+          api.get('/hackerone/reports?size=10'),
+          api.get('/hackerone/logs?size=15'),
+        ])
+        setH1Reports(h1Res.data?.data ?? [])
+        setH1Logs(h1LogsRes.data?.data ?? [])
+      } catch { /* credenciais não configuradas — silencioso */ }
     } catch {
       setData(null)
     } finally {
@@ -863,8 +1050,11 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-[12px] text-muted-foreground mt-0.5">
+            Visão geral do seu programa de bug bounty — recon, findings, pipeline e submissões ao HackerOne.
+          </p>
         </div>
-        <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors">
+        <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors" title="Atualizar dados">
           <RefreshCw size={14} className="text-muted-foreground" />
         </button>
       </div>
@@ -880,6 +1070,7 @@ export default function DashboardPage() {
             value: data?.total_findings ?? 0,
             href: '/findings',
             hovColor: 'hov-red',
+            description: 'Vulnerabilidades encontradas pelo recon automático e inseridas manualmente.',
           },
           {
             type: 'bounty' as const,
@@ -888,6 +1079,7 @@ export default function DashboardPage() {
             label: 'Bounty Ganho',
             value: `$${(data?.bounty_earned ?? 0).toLocaleString()}`,
             hovColor: 'hov-emerald',
+            description: 'Soma dos bounties pagos pelos programas. Atualizado via campo bounty_amount.',
           },
           {
             type: 'targets' as const,
@@ -896,6 +1088,7 @@ export default function DashboardPage() {
             label: 'Targets In-Scope',
             value: data?.targets_in_scope ?? 0,
             hovColor: 'hov-cyan',
+            description: 'Domínios e wildcards habilitados no auto-scanner (recon a cada 15 min).',
           },
           {
             type: 'jobs' as const,
@@ -906,6 +1099,7 @@ export default function DashboardPage() {
             href: '/jobs',
             pulse: !!(data?.active_jobs),
             hovColor: 'hov-yellow',
+            description: 'Tarefas de recon rodando agora: subfinder, httpx, naabu, ffuf, dnsx.',
           },
           {
             type: 'ready' as const,
@@ -915,6 +1109,7 @@ export default function DashboardPage() {
             value: data?.ready_to_report?.length ?? 0,
             href: '/pipeline',
             hovColor: 'hov-violet',
+            description: 'Findings aceitos com score ≥ 70% — prontos para gerar relatório com IA.',
           },
         ].map(card => (
           <Tooltip key={card.type} content={getKpiTooltip(card.type, data)}>
@@ -922,6 +1117,32 @@ export default function DashboardPage() {
           </Tooltip>
         ))}
       </div>
+
+      {/* ── Próxima Ação ─────────────────────────────────────────────────── */}
+      {data && (() => {
+        const critHigh = (data.by_severity?.critical ?? 0) + (data.by_severity?.high ?? 0)
+        const ready = data.ready_to_report?.length ?? 0
+        const inScope = data.targets_in_scope ?? 0
+        if (inScope === 0) return (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-blue-500/25 bg-blue-500/5 text-[12px]">
+            <Crosshair size={14} className="text-blue-400 shrink-0" />
+            <span className="text-muted-foreground"><strong className="text-blue-400">Nenhum target in-scope.</strong> Adicione domínios ou wildcards na página <Link href="/programs" className="underline text-blue-400">Programs</Link> para o auto-scanner começar o recon.</span>
+          </div>
+        )
+        if (ready > 0) return (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-violet-500/25 bg-violet-500/5 text-[12px]">
+            <CheckCircle2 size={14} className="text-violet-400 shrink-0" />
+            <span className="text-muted-foreground"><strong className="text-violet-400">{ready} finding{ready !== 1 ? 's' : ''} prontos para relatório.</strong> Acesse o <Link href="/pipeline" className="underline text-violet-400">Pipeline</Link> para gerar o draft com IA e submeter ao HackerOne.</span>
+          </div>
+        )
+        if (critHigh > 0) return (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-orange-500/25 bg-orange-500/5 text-[12px]">
+            <AlertCircle size={14} className="text-orange-400 shrink-0" />
+            <span className="text-muted-foreground"><strong className="text-orange-400">{critHigh} finding{critHigh !== 1 ? 's' : ''} Critical/High</strong> aguardando triagem. Valide e mova para &quot;accepted&quot; na página <Link href="/findings" className="underline text-orange-400">Findings</Link>.</span>
+          </div>
+        )
+        return null
+      })()}
 
       {/* ── Linha 1: Tipos de Vulnerabilidade ────────────────────────────── */}
       <VulnTypeRow findings={allFindings} />
@@ -931,11 +1152,16 @@ export default function DashboardPage() {
 
       {/* Severity Boxes with Tooltips */}
       <div>
-        <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <Shield size={13} className="text-muted-foreground" />
-          Bugs por Severidade
-          <span className="text-[10px] text-muted-foreground font-normal">(clique para filtrar)</span>
-        </h2>
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Shield size={13} className="text-muted-foreground" />
+            Bugs por Severidade
+            <span className="text-[10px] text-muted-foreground font-normal">(clique para filtrar)</span>
+          </h2>
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5">
+            Distribuição das vulnerabilidades por nível CVSS 3.1. Passe o mouse para ver bounty estimado e exemplos de cada tipo.
+          </p>
+        </div>
         <div className="grid grid-cols-5 gap-2">
           {SEVERITIES.map(sev => {
             const s = SEV[sev]
@@ -953,8 +1179,11 @@ export default function DashboardPage() {
                   )}
                 >
                   <div className={cn('w-2 h-2 rounded-full mx-auto mb-1.5', s.dot)} />
-                  <p className={cn('text-lg font-bold leading-none', s.text)}>{count}</p>
+                  <p className={cn('text-lg font-bold leading-none tabular-nums', s.text)}>{count}</p>
                   <p className={cn('text-[9px] font-semibold uppercase mt-1', s.text)}>{sev.slice(0,4)}</p>
+                  <p className="text-[8px] text-muted-foreground/40 mt-0.5 tabular-nums">
+                    {sev === 'critical' ? 'CVSS 9–10' : sev === 'high' ? 'CVSS 7–9' : sev === 'medium' ? 'CVSS 4–7' : sev === 'low' ? 'CVSS 0–4' : 'Info'}
+                  </p>
                 </button>
               </Tooltip>
             )
@@ -962,206 +1191,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Bottom row: Priority Queue + Recent Jobs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-        {/* Priority Queue */}
-        <Tooltip content={{
-          title: 'Fila de Prioridade',
-          priority: 'high',
-          description: 'Findings com status "new" ou "triaging" ordenados por data de criação. São os bugs que ainda não foram avaliados ou estão em análise — precisam de atenção imediata para não perder janela de submissão.',
-          details: [
-            { label: 'Status incluídos', value: 'new, triaging' },
-            { label: 'Limite exibido', value: '10 findings' },
-            { label: 'Ordenação', value: 'mais recentes primeiro' },
-          ],
-          actions: [
-            'Triage cada finding: mova para "accepted" se for válido e reproduzível.',
-            'Mova para "duplicate" se já foi reportado por você ou outro pesquisador.',
-            'Use o Pipeline para gerar relatórios e submeter os "accepted" ao H1.',
-            'Findings parados em "new" por muito tempo podem ser perdidos para duplicatas.',
-          ],
-        }}>
-          <div>
-            <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <AlertCircle size={13} className="text-red-400" />
-              Fila de Prioridade
-              <Info size={10} className="text-muted-foreground/40" />
-            </h2>
-            {(data?.priority_queue?.length ?? 0) === 0 ? (
-              <div className="flex items-center justify-center h-20 rounded-xl border border-dashed border-border text-xs text-muted-foreground">
-                Sem bugs pendentes — ótimo trabalho!
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {data?.priority_queue?.slice(0, 5).map(f => {
-                  const s = SEV[f.severity] ?? SEV.informational
-                  const st = STATUS_LABEL[f.status]
-                  return (
-                    <div key={f.id} className={cn('flex items-center gap-2.5 p-3 rounded-xl border', s.border, s.bg)}>
-                      <div className={cn('w-2 h-2 rounded-full shrink-0', s.dot)} />
-                      <p className="text-xs font-medium flex-1 truncate">{f.title}</p>
-                      {st && (
-                        <span className={cn('flex items-center gap-1 text-[10px] shrink-0', st.color)}>
-                          {st.icon} {st.label}
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </Tooltip>
-
-        {/* Recent Jobs */}
-        <Tooltip content={{
-          title: 'Jobs Recentes de Recon',
-          priority: 'info',
-          description: 'Últimas tarefas executadas pelo worker ARQ. Cada job roda uma ferramenta de reconhecimento em um target específico e pode criar findings automaticamente quando encontra vulnerabilidades.',
-          details: [
-            { label: 'Ferramentas', value: 'subfinder, httpx, gau, naabu, ffuf, dnsx' },
-            { label: 'Auto-findings', value: 'recon, port_scan, dir_fuzz, idor, dns' },
-            { label: 'Cron automático', value: 'a cada 15 minutos' },
-            { label: 'Paralelo máx', value: '10 jobs' },
-          ],
-          actions: [
-            'Jobs "running" estão ativamente varrendo seus targets agora.',
-            'Jobs "failed" indicam erro — cheque os logs na página Jobs.',
-            '"result_summary" mostra quantos hosts/subdomínios foram encontrados.',
-            'Acesse Jobs para ver logs detalhados e cancelar jobs presos.',
-          ],
-        }}>
-          <div>
-            <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <Zap size={13} className="text-yellow-400" />
-              Jobs Recentes
-              <Info size={10} className="text-muted-foreground/40" />
-            </h2>
-            {(data?.recent_jobs?.length ?? 0) === 0 ? (
-              <div className="flex items-center justify-center h-20 rounded-xl border border-dashed border-border text-xs text-muted-foreground">
-                Sem jobs recentes
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {data?.recent_jobs?.slice(0, 5).map(j => (
-                  <div key={j.id} className="flex items-center gap-2.5 p-3 rounded-xl bg-card border border-border">
-                    <span className={cn(
-                      'px-1.5 py-0.5 rounded text-[10px] font-medium',
-                      j.status === 'completed' ? 'bg-emerald-500/15 text-emerald-400' :
-                      j.status === 'running'   ? 'bg-blue-500/15 text-blue-400' :
-                      j.status === 'failed'    ? 'bg-red-500/15 text-red-400' :
-                                                 'bg-zinc-500/15 text-zinc-400'
-                    )}>
-                      {j.status}
-                    </span>
-                    <span className="text-xs font-medium flex-1">{TYPE_LABEL[j.type] ?? j.type}</span>
-                    {j.result_summary && (
-                      <span className="text-[10px] text-emerald-400">
-                        {Object.entries(j.result_summary).map(([k, v]) => `${k}:${v}`).join(' ')}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground shrink-0">
-                      {new Date(j.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Tooltip>
-      </div>
-
-      {/* ── AI Report Log ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4">
-
-        {/* AI Report Log */}
-        <Tooltip content={{
-          title: 'Log de Geração de Relatórios — IA',
-          priority: 'info',
-          description: 'Histórico de relatórios gerados pelo modelo Ollama (xploiter/the-xploiter) ou Claude como fallback. Cada entrada mostra qual finding foi processado, quantos tokens foram consumidos e o modelo usado.',
-          details: [
-            { label: 'Modelo primário', value: 'xploiter/the-xploiter (Ollama local)' },
-            { label: 'Fallback', value: 'Claude Sonnet (Anthropic)' },
-            { label: 'Geração via', value: 'Pipeline → Executar' },
-            { label: 'Total gerados', value: String(aiReports.length) },
-          ],
-          actions: [
-            'Relatórios são gerados automaticamente pelo Pipeline.',
-            'Acesse Pipeline → Executar Todos para gerar para todos os findings aceitos.',
-            'Relatórios pendentes (is_ready=false) ainda estão sendo processados.',
-            'Clique em "Ver todos" para acessar a lista completa na página de relatórios.',
-          ],
-        }}>
-          <div className="bg-card border border-border rounded-xl overflow-hidden geo-shadow">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <BrainCircuit size={14} className="text-violet-400" />
-                <span className="text-sm font-semibold">Log da IA</span>
-                <span className="text-[10px] text-muted-foreground">({aiReports.length} relatórios)</span>
-                <Info size={10} className="text-muted-foreground/30" />
-              </div>
-              <Link href="/pipeline" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                Ver Pipeline <ChevronRight size={10} />
-              </Link>
-            </div>
-
-            {aiReports.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-32 gap-2 text-muted-foreground p-4">
-                <BrainCircuit size={24} className="opacity-20" />
-                <p className="text-xs text-center">Nenhum relatório gerado ainda.<br />Execute o Pipeline para gerar com IA.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border max-h-72 overflow-y-auto">
-                {aiReports.slice(0, 10).map(r => {
-                  const finding = allFindings.find(f => f.id === r.finding_id)
-                  const totalTokens = (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
-                  const isOllama = r.model_used?.includes('xploiter') || r.model_used?.includes('ollama') || (!r.model_used?.includes('claude'))
-                  return (
-                    <div key={r.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
-                      <div className={cn(
-                        'w-2 h-2 rounded-full mt-1.5 shrink-0',
-                        r.is_ready ? 'bg-emerald-400' : 'bg-yellow-400 animate-pulse'
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-medium truncate">
-                          {finding?.title ?? `Finding ${r.finding_id.slice(-6)}`}
-                        </p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className={cn(
-                            'text-[10px] px-1.5 py-0.5 rounded font-medium',
-                            isOllama
-                              ? 'bg-violet-500/15 text-violet-400'
-                              : 'bg-orange-500/15 text-orange-400'
-                          )}>
-                            {isOllama ? '🤖 Ollama' : '☁ Claude'}
-                          </span>
-                          {totalTokens > 0 && (
-                            <span className="text-[10px] text-muted-foreground">{totalTokens.toLocaleString()} tokens</span>
-                          )}
-                          <span className="text-[10px] text-muted-foreground">
-                            {new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      </div>
-                      <span className={cn(
-                        'text-[10px] font-semibold shrink-0 mt-1',
-                        r.is_ready ? 'text-emerald-400' : 'text-yellow-400'
-                      )}>
-                        {r.is_ready ? 'Pronto' : 'Gerando…'}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </Tooltip>
-
-      </div>
-      {/* ── fim AI Log ───────────────────────────────────────────────────── */}
-
-      {/* ── Análise da IA + Log do Sistema ───────────────────────────────── */}
+      {/* ── Análise da IA ───────────────────────────────────────────────── */}
       <AiAnalysisPanel
         findings={allFindings}
         analyzing={analyzing}
@@ -1206,8 +1237,193 @@ export default function DashboardPage() {
         }}
       />
 
-      {/* ── Log do Sistema ────────────────────────────────────────────────── */}
-      <SystemActivityLog rt={rt} recentJobs={data?.recent_jobs ?? []} />
+      {/* ── Caixa de Entrada H1 + Log H1 ────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        {/* Caixa de Entrada HackerOne */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col" style={{ background: '#0a0a0f', borderColor: 'rgba(249,115,22,0.18)' }}>
+          <div className="px-4 py-3 border-b shrink-0 flex items-center justify-between" style={{ borderColor: 'rgba(249,115,22,0.12)', background: 'rgba(249,115,22,0.04)' }}>
+            <div className="flex items-center gap-2">
+              <Shield size={14} className="text-orange-400" />
+              <span className="text-sm font-semibold">Caixa de Entrada</span>
+              <span className="text-[10px] text-zinc-600">HackerOne</span>
+            </div>
+            <Link href="/pipeline" className="text-[10px] text-orange-400/60 hover:text-orange-400 transition-colors flex items-center gap-1">
+              Pipeline <ChevronRight size={10} />
+            </Link>
+          </div>
+          {h1Reports.length === 0 ? (
+            <div className="flex flex-col items-center justify-center flex-1 gap-2 py-8 text-muted-foreground">
+              <Shield size={22} className="opacity-15" />
+              <p className="text-xs text-center">Sem reports ou credenciais H1 não configuradas.</p>
+            </div>
+          ) : (
+            <div className="divide-y overflow-y-auto flex-1" style={{ borderColor: 'rgba(255,255,255,0.04)', maxHeight: '280px' }}>
+              {h1Reports.map(r => {
+                const state = r.attributes.state
+                const stateColor = state === 'resolved' ? 'text-emerald-400' : state === 'triaged' ? 'text-blue-400' : state === 'new' ? 'text-yellow-400' : 'text-zinc-400'
+                const sevColor: Record<string, string> = { critical: 'text-red-400', high: 'text-orange-400', medium: 'text-yellow-400', low: 'text-blue-400' }
+                return (
+                  <div key={r.id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-orange-500/[0.03] transition-colors">
+                    <div className={cn('w-1.5 h-1.5 rounded-full mt-2 shrink-0', state === 'resolved' ? 'bg-emerald-400' : state === 'triaged' ? 'bg-blue-400' : 'bg-yellow-400')} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium truncate">{r.attributes.title}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className={cn('text-[10px] font-semibold capitalize', stateColor)}>{state}</span>
+                        {r.attributes.severity_rating && r.attributes.severity_rating !== 'none' && (
+                          <span className={cn('text-[10px] font-bold uppercase', sevColor[r.attributes.severity_rating] ?? 'text-zinc-400')}>{r.attributes.severity_rating}</span>
+                        )}
+                        <span className="text-[10px] text-zinc-600">
+                          {new Date(r.attributes.created_at).toLocaleDateString('pt-BR')}
+                        </span>
+                      </div>
+                    </div>
+                    <a href={`https://hackerone.com/reports/${r.id}`} target="_blank" rel="noopener noreferrer" className="shrink-0 mt-1">
+                      <ExternalLink size={10} className="text-zinc-600 hover:text-orange-400 transition-colors" />
+                    </a>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Log da HackerOne */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col" style={{ background: '#0a0a0f', borderColor: 'rgba(249,115,22,0.18)' }}>
+          <div className="px-4 py-3 border-b shrink-0 flex items-center justify-between" style={{ borderColor: 'rgba(249,115,22,0.12)', background: 'rgba(249,115,22,0.04)' }}>
+            <div className="flex items-center gap-2">
+              <Radio size={14} className="text-orange-400" />
+              <span className="text-sm font-semibold">Log HackerOne</span>
+              <span className="text-[10px] text-zinc-600">ações da API</span>
+            </div>
+            <span className="text-[10px] text-zinc-600">{h1Logs.length} entradas</span>
+          </div>
+          {h1Logs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center flex-1 gap-2 py-8 text-muted-foreground">
+              <Radio size={22} className="opacity-15" />
+              <p className="text-xs text-center">Sem logs. A API HackerOne registra<br />ações de sync e submissão aqui.</p>
+            </div>
+          ) : (
+            <div className="divide-y overflow-y-auto flex-1" style={{ borderColor: 'rgba(255,255,255,0.04)', maxHeight: '280px' }}>
+              {h1Logs.map(l => {
+                const isErr = l.status === 'error'
+                const ACTION_LABEL: Record<string, string> = {
+                  sync: 'Sync', submit_report: 'Submissão', list_programs: 'Programas',
+                  list_reports: 'Reports', get_earnings: 'Earnings', hacktivity: 'Hacktivity',
+                }
+                return (
+                  <div key={l.id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-orange-500/[0.03] transition-colors">
+                    <div className={cn('w-1.5 h-1.5 rounded-full mt-2 shrink-0', isErr ? 'bg-red-400' : 'bg-emerald-400')} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded', isErr ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400')}>
+                          {ACTION_LABEL[l.action] ?? l.action}
+                        </span>
+                        {l.duration_ms != null && (
+                          <span className="text-[10px] text-zinc-600">{l.duration_ms}ms</span>
+                        )}
+                      </div>
+                      <p className={cn('text-[11px] mt-0.5 truncate', isErr ? 'text-red-400/80' : 'text-zinc-400')}>
+                        {isErr ? (l.error ?? l.detail) : l.detail}
+                      </p>
+                    </div>
+                    <span className="text-[9px] text-zinc-700 shrink-0 mt-1">
+                      {new Date(l.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* ── AI Report Log + Log do Sistema lado a lado ──────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        {/* AI Report Log */}
+        <Tooltip content={{
+          title: 'Log de Geração de Relatórios — IA',
+          priority: 'info',
+          description: 'Histórico de relatórios gerados pelo modelo Ollama (xploiter/the-xploiter) ou Claude como fallback.',
+          details: [
+            { label: 'Modelo primário', value: 'xploiter/the-xploiter (Ollama local)' },
+            { label: 'Fallback', value: 'Claude Sonnet (Anthropic)' },
+            { label: 'Total gerados', value: String(aiReports.length) },
+          ],
+          actions: [
+            'Relatórios são gerados automaticamente pelo Pipeline.',
+            'Acesse Pipeline → Executar Todos para gerar para todos os findings aceitos.',
+          ],
+        }}>
+          <div className="bg-card border border-border rounded-xl overflow-hidden geo-shadow h-full flex flex-col">
+            <div className="px-4 py-3 border-b border-border shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BrainCircuit size={14} className="text-violet-400" />
+                  <span className="text-sm font-semibold">Log da IA</span>
+                  <span className="text-[10px] text-muted-foreground">({aiReports.length} relatórios)</span>
+                </div>
+                <Link href="/pipeline" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  Ver Pipeline <ChevronRight size={10} />
+                </Link>
+              </div>
+              <p className="text-[11px] text-muted-foreground/50 mt-1">
+                Ollama (primário) ou Claude (fallback). Ponto verde = pronto para H1.
+              </p>
+            </div>
+            {aiReports.length === 0 ? (
+              <div className="flex flex-col items-center justify-center flex-1 gap-2 text-muted-foreground p-4">
+                <BrainCircuit size={24} className="opacity-20" />
+                <p className="text-xs text-center">Nenhum relatório gerado ainda.<br />Execute o Pipeline para gerar com IA.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border overflow-y-auto flex-1" style={{ maxHeight: '320px' }}>
+                {aiReports.slice(0, 10).map(r => {
+                  const finding = allFindings.find(f => f.id === r.finding_id)
+                  const totalTokens = (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
+                  const isOllama = r.model_used?.includes('xploiter') || r.model_used?.includes('ollama') || (!r.model_used?.includes('claude'))
+                  return (
+                    <div key={r.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
+                      <div className={cn(
+                        'w-2 h-2 rounded-full mt-1.5 shrink-0',
+                        r.is_ready ? 'bg-emerald-400' : 'bg-yellow-400 animate-pulse'
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-medium truncate">
+                          {finding?.title ?? `Finding ${r.finding_id.slice(-6)}`}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded font-medium',
+                            isOllama ? 'bg-violet-500/15 text-violet-400' : 'bg-orange-500/15 text-orange-400'
+                          )}>
+                            {isOllama ? '🤖 Ollama' : '☁ Claude'}
+                          </span>
+                          {totalTokens > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{totalTokens.toLocaleString()} tokens</span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                      <span className={cn('text-[10px] font-semibold shrink-0 mt-1', r.is_ready ? 'text-emerald-400' : 'text-yellow-400')}>
+                        {r.is_ready ? 'Pronto' : 'Gerando…'}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </Tooltip>
+
+        {/* Log do Sistema */}
+        <SystemActivityLog rt={rt} recentJobs={data?.recent_jobs ?? []} />
+
+      </div>
 
       {selectedFinding && (
         <ReportDrawer finding={selectedFinding} onClose={() => setSelectedFinding(null)} />
@@ -1623,38 +1839,43 @@ function SystemActivityLog({
   return (
     <div className="rounded-xl border border-border overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card/80">
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
+      <div className="px-4 py-3 border-b border-border bg-card/80">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
+            </div>
+            <span className="text-xs font-semibold text-muted-foreground font-mono">system.log</span>
+            <div className={cn(
+              'flex items-center gap-1 text-[10px] font-mono',
+              rt.connected ? 'text-emerald-400' : 'text-red-400'
+            )}>
+              <Radio size={9} className={rt.connected ? 'animate-pulse' : ''} />
+              {rt.connected ? 'live' : 'offline'}
+            </div>
+            {loadingLogs && <RefreshCw size={9} className="animate-spin text-zinc-600" />}
           </div>
-          <span className="text-xs font-semibold text-muted-foreground font-mono">system.log</span>
-          <div className={cn(
-            'flex items-center gap-1 text-[10px] font-mono',
-            rt.connected ? 'text-emerald-400' : 'text-red-400'
-          )}>
-            <Radio size={9} className={rt.connected ? 'animate-pulse' : ''} />
-            {rt.connected ? 'live' : 'offline'}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground font-mono">{totalLines} linhas</span>
+            <button
+              onClick={() => setAutoScroll(v => !v)}
+              className={cn(
+                'flex items-center gap-1 text-[10px] px-2 py-1 rounded border font-mono transition-all',
+                autoScroll
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                  : 'border-border text-muted-foreground hover:bg-accent'
+              )}
+            >
+              <ChevronDown size={9} className={autoScroll ? 'animate-bounce' : ''} />
+              scroll {autoScroll ? 'on' : 'off'}
+            </button>
           </div>
-          {loadingLogs && <RefreshCw size={9} className="animate-spin text-zinc-600" />}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground font-mono">{totalLines} linhas</span>
-          <button
-            onClick={() => setAutoScroll(v => !v)}
-            className={cn(
-              'flex items-center gap-1 text-[10px] px-2 py-1 rounded border font-mono transition-all',
-              autoScroll
-                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                : 'border-border text-muted-foreground hover:bg-accent'
-            )}
-          >
-            <ChevronDown size={9} className={autoScroll ? 'animate-bounce' : ''} />
-            scroll {autoScroll ? 'on' : 'off'}
-          </button>
-        </div>
+        <p className="text-[10px] text-zinc-600 mt-1.5 font-mono">
+          Logs unificados dos containers (API, Worker, MongoDB, Redis, Frontend) + eventos SSE em tempo real. Filtre por serviço nas abas abaixo.
+        </p>
       </div>
 
       {/* Service filter pills */}
@@ -1799,10 +2020,15 @@ function VulnTypeRow({ findings }: { findings: FindingItem[] }) {
 
   return (
     <div>
-      <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-        <Bug size={13} className="text-muted-foreground" />
-        Tipos de Vulnerabilidade
-      </h2>
+      <div className="mb-3">
+        <h2 className="text-sm font-semibold flex items-center gap-2">
+          <Bug size={13} className="text-muted-foreground" />
+          Tipos de Vulnerabilidade
+        </h2>
+        <p className="text-[11px] text-muted-foreground/60 mt-0.5">
+          Classificação dos findings por categoria de vuln. Passe o mouse para ver bounty típico e descrição. Clique para filtrar na página Findings.
+        </p>
+      </div>
       <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
         {VULN_TYPES.map(t => {
           const count = countByType[t.key] ?? 0
@@ -1953,11 +2179,16 @@ function H1SubmissionRow({ findings, aiReports }: { findings: FindingItem[]; aiR
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold flex items-center gap-2">
-          <Send size={13} className="text-emerald-400" />
-          Jornada de Envio — HackerOne
-        </h2>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Send size={13} className="text-emerald-400" />
+            Jornada de Envio — HackerOne
+          </h2>
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5">
+            Funil completo desde a detecção até o bounty. Cada etapa mostra a taxa de conversão — passe o mouse para ações específicas.
+          </p>
+        </div>
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           {dropped > 0 && (
             <span className="flex items-center gap-1 text-orange-400/70">
@@ -2087,7 +2318,7 @@ function H1SubmissionRow({ findings, aiReports }: { findings: FindingItem[]; aiR
 // ── KPI Card ───────────────────────────────────────────────────────────────
 
 function KpiCard({
-  icon, bg, label, value, href, pulse, accent, hovColor
+  icon, bg, label, value, href, pulse, accent, hovColor, description
 }: {
   icon: React.ReactNode
   bg: string
@@ -2097,6 +2328,7 @@ function KpiCard({
   pulse?: boolean
   accent?: string
   hovColor?: string
+  description?: string
 }) {
   const inner = (
     <div className={cn(
@@ -2109,8 +2341,11 @@ function KpiCard({
         </div>
         <Info size={11} className="text-muted-foreground/30 mt-0.5" />
       </div>
-      <p className="text-xl font-bold leading-none">{value}</p>
-      <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
+      <p className="text-xl font-bold leading-none tabular-nums">{value}</p>
+      <p className="text-[11px] text-muted-foreground mt-1 font-medium">{label}</p>
+      {description && (
+        <p className="text-[10px] text-muted-foreground/50 mt-2 leading-relaxed border-t border-border/40 pt-2">{description}</p>
+      )}
     </div>
   )
   if (href) return <Link href={href}>{inner}</Link>
@@ -2222,6 +2457,295 @@ function ReportField({ label, value, valueClass }: { label: string; value?: stri
     <div>
       <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
       <p className={cn('text-[11px] font-medium capitalize', valueClass ?? 'text-foreground')}>{value}</p>
+    </div>
+  )
+}
+
+// ── Dashboard sub-components ───────────────────────────────────────────────
+
+const DASH_BANNER_STYLES = {
+  blue:    { bg: 'rgba(59,130,246,0.06)',  border: 'rgba(59,130,246,0.2)',  color: '#60a5fa' },
+  violet:  { bg: 'rgba(139,92,246,0.06)', border: 'rgba(139,92,246,0.2)',  color: '#a78bfa' },
+  orange:  { bg: 'rgba(249,115,22,0.06)', border: 'rgba(249,115,22,0.2)',  color: '#fb923c' },
+  emerald: { bg: 'rgba(16,185,129,0.06)', border: 'rgba(16,185,129,0.2)',  color: '#34d399' },
+}
+
+function DashBanner({ v, icon, text }: { v: keyof typeof DASH_BANNER_STYLES; icon: React.ReactNode; text: React.ReactNode }) {
+  const s = DASH_BANNER_STYLES[v]
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border"
+      style={{ background: s.bg, borderColor: s.border, color: s.color }}>
+      {icon}
+      <span className="text-[12px] leading-relaxed">{text}</span>
+    </div>
+  )
+}
+
+function DashKpi({ icon, bg, color, label, value, href, pulse, accent }: {
+  icon: React.ReactNode; bg: string; color: string; label: string
+  value: string | number; href?: string; pulse?: boolean; accent?: boolean
+}) {
+  const card = (
+    <div className={cn(
+      'relative p-4 rounded-xl border transition-all cursor-default',
+      accent ? 'border-violet-500/25' : 'border-border hover:border-border/60',
+    )} style={{ background: accent ? 'rgba(139,92,246,0.06)' : 'rgba(255,255,255,0.02)' }}>
+      <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center mb-3', bg)}>
+        <span className={cn(color, pulse && 'animate-pulse')}>{icon}</span>
+      </div>
+      <p className={cn('text-2xl font-bold tabular-nums leading-none', accent ? 'text-violet-300' : 'text-foreground')}>{value}</p>
+      <p className="text-[11px] text-muted-foreground mt-1.5 font-medium leading-tight">{label}</p>
+    </div>
+  )
+  return href ? <Link href={href} className="block">{card}</Link> : card
+}
+
+const SEV_BAR_CFG = [
+  { key: 'critical',      bar: '#ef4444', text: 'text-red-400',    label: 'Critical' },
+  { key: 'high',          bar: '#f97316', text: 'text-orange-400', label: 'High' },
+  { key: 'medium',        bar: '#eab308', text: 'text-yellow-400', label: 'Medium' },
+  { key: 'low',           bar: '#3b82f6', text: 'text-blue-400',   label: 'Low' },
+  { key: 'informational', bar: '#71717a', text: 'text-zinc-400',   label: 'Info' },
+]
+
+function DashSeverityBar({ bySev, total }: { bySev: Record<string, number>; total: number }) {
+  return (
+    <div className="p-4 rounded-xl border border-border" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          <Shield size={12} /> Severidade
+        </h2>
+        <span className="text-[11px] text-muted-foreground">{total} findings</span>
+      </div>
+      {/* Stacked bar */}
+      <div className="flex h-1.5 rounded-full overflow-hidden gap-px mb-3">
+        {SEV_BAR_CFG.map(({ key, bar }) => {
+          const count = bySev[key] ?? 0
+          if (!count) return null
+          return <div key={key} style={{ width: `${(count / (total || 1)) * 100}%`, background: bar }} />
+        })}
+        {total === 0 && <div className="flex-1 bg-zinc-800 rounded-full" />}
+      </div>
+      {/* Numbers */}
+      <div className="grid grid-cols-5 gap-1">
+        {SEV_BAR_CFG.map(({ key, text, label }) => {
+          const count = bySev[key] ?? 0
+          return (
+            <div key={key} className="text-center">
+              <p className={cn('text-xl font-bold tabular-nums leading-none', text, !count && 'opacity-25')}>{count}</p>
+              <p className="text-[9px] text-muted-foreground uppercase tracking-wide mt-1">{label}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function DashPriorityQueue({ findings, onSelect }: { findings: FindingItem[]; onSelect: (f: FindingItem) => void }) {
+  return (
+    <div className="rounded-xl border border-border overflow-hidden h-full" style={{ background: 'rgba(255,255,255,0.015)' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <AlertCircle size={13} className="text-orange-400" />
+          <span className="text-sm font-semibold">Fila de Prioridade</span>
+          {findings.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/25 text-orange-400 text-[10px] font-bold">
+              {findings.length}
+            </span>
+          )}
+        </div>
+        <Link href="/findings" className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+          Ver todos <ChevronRight size={10} />
+        </Link>
+      </div>
+      {findings.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-14 gap-3 text-muted-foreground">
+          <CheckCircle2 size={24} className="opacity-20" />
+          <p className="text-xs">Nenhum finding pendente de triagem</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-border">
+          {findings.map(f => {
+            const sev = SEV[f.severity] ?? SEV.informational
+            const st = STATUS_LABEL[f.status]
+            return (
+              <button key={f.id} onClick={() => onSelect(f)}
+                className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors group">
+                <span className={cn('px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0', sev.bg, sev.text)}>
+                  {f.severity.slice(0, 4)}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-medium truncate">{f.title}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {f.affected_url && <span className="text-[10px] text-zinc-600 truncate max-w-[160px]">{f.affected_url}</span>}
+                    <span className={cn('text-[10px] font-medium shrink-0', st?.color ?? 'text-zinc-500')}>{st?.label ?? f.status}</span>
+                  </div>
+                </div>
+                <ChevronRight size={12} className="text-zinc-700 shrink-0 group-hover:text-zinc-400 transition-colors" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DashReadyToReport({ findings }: { findings: FindingItem[] }) {
+  return (
+    <div className="rounded-xl border overflow-hidden"
+      style={{ background: 'rgba(139,92,246,0.04)', borderColor: 'rgba(139,92,246,0.18)' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b"
+        style={{ borderColor: 'rgba(139,92,246,0.12)' }}>
+        <div className="flex items-center gap-2">
+          <CheckCircle2 size={13} className="text-violet-400" />
+          <span className="text-sm font-semibold">Prontos para Report</span>
+          {findings.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/25 text-violet-400 text-[10px] font-bold">
+              {findings.length}
+            </span>
+          )}
+        </div>
+        <Link href="/pipeline" className="text-[10px] text-violet-400/60 hover:text-violet-400 flex items-center gap-1 transition-colors">
+          Pipeline <ChevronRight size={10} />
+        </Link>
+      </div>
+      {findings.length === 0 ? (
+        <div className="flex items-center justify-center py-7">
+          <p className="text-xs text-muted-foreground">Nenhum finding aceito ainda</p>
+        </div>
+      ) : (
+        <div className="divide-y" style={{ borderColor: 'rgba(139,92,246,0.08)' }}>
+          {findings.map(f => {
+            const sev = SEV[f.severity] ?? SEV.informational
+            return (
+              <div key={f.id} className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-violet-500/[0.03] transition-colors">
+                <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', sev.dot)} />
+                <p className="text-[11px] font-medium flex-1 truncate">{f.title}</p>
+                <span className={cn('text-[9px] font-bold uppercase shrink-0', sev.text)}>{f.severity.slice(0, 4)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const JOB_TYPE_SHORT: Record<string, string> = {
+  recon: 'Recon', dns_recon: 'DNS', port_scan: 'Ports', dir_fuzz: 'Fuzz',
+  param_discovery: 'Params', js_analyzer: 'JS', xss_scanner: 'XSS',
+  sqli_scanner: 'SQLi', idor: 'IDOR', secret_scanner: 'Secrets',
+  api_scanner: 'API', pipeline: 'Pipeline',
+}
+
+function DashJobsFeed({ jobs }: { jobs: JobItem[] }) {
+  return (
+    <div className="rounded-xl border border-border overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Activity size={13} className="text-blue-400" />
+          <span className="text-sm font-semibold">Jobs Recentes</span>
+        </div>
+        <Link href="/jobs" className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+          Ver todos <ChevronRight size={10} />
+        </Link>
+      </div>
+      {jobs.length === 0 ? (
+        <div className="flex items-center justify-center py-7">
+          <p className="text-xs text-muted-foreground">Nenhum job recente</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-border">
+          {jobs.map(j => {
+            const isRun = j.status === 'running', isPend = j.status === 'pending', isFail = j.status === 'failed'
+            const dot = isRun || isPend ? 'bg-blue-400 animate-pulse' : isFail ? 'bg-red-400' : 'bg-emerald-400'
+            const textCls = isRun ? 'text-blue-400' : isPend ? 'text-zinc-500' : isFail ? 'text-red-400' : 'text-emerald-400'
+            return (
+              <div key={j.id} className="flex items-center gap-3 px-4 py-2.5">
+                <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />
+                <span className="text-[11px] font-medium text-zinc-300 shrink-0 w-16 truncate">
+                  {JOB_TYPE_SHORT[j.type] ?? j.type}
+                </span>
+                <span className={cn('text-[10px] font-semibold capitalize shrink-0', textCls)}>{j.status}</span>
+                {j.result_summary && Object.keys(j.result_summary).length > 0 && (
+                  <span className="text-[10px] text-zinc-600 truncate flex-1">
+                    {Object.entries(j.result_summary).map(([k, v]) => `${k}:${v}`).join(' ')}
+                  </span>
+                )}
+                <span className="text-[9px] text-zinc-700 shrink-0 ml-auto">
+                  {new Date(j.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const H1_STATE_DOT: Record<string, { dot: string; color: string; label: string }> = {
+  new:              { dot: 'bg-yellow-400',  color: 'text-yellow-400',  label: 'Novo' },
+  triaged:          { dot: 'bg-blue-400',    color: 'text-blue-400',    label: 'Triagem' },
+  resolved:         { dot: 'bg-emerald-400', color: 'text-emerald-400', label: 'Resolvido' },
+  informative:      { dot: 'bg-zinc-500',    color: 'text-zinc-400',    label: 'Informativo' },
+  duplicate:        { dot: 'bg-zinc-600',    color: 'text-zinc-500',    label: 'Duplicado' },
+  'not-applicable': { dot: 'bg-zinc-700',    color: 'text-zinc-600',    label: 'N/A' },
+  'needs-more-info':{ dot: 'bg-orange-400',  color: 'text-orange-400',  label: 'Mais Info' },
+}
+
+function DashH1Inbox({ reports }: { reports: H1Report[] }) {
+  return (
+    <div className="rounded-xl border overflow-hidden"
+      style={{ background: 'rgba(249,115,22,0.03)', borderColor: 'rgba(249,115,22,0.13)' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b"
+        style={{ borderColor: 'rgba(249,115,22,0.09)' }}>
+        <div className="flex items-center gap-2">
+          <Shield size={13} className="text-orange-400" />
+          <span className="text-sm font-semibold">HackerOne Inbox</span>
+          {reports.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/25 text-orange-400 text-[10px] font-bold">
+              {reports.length}
+            </span>
+          )}
+        </div>
+        <Link href="/hackerone" className="text-[10px] text-orange-400/60 hover:text-orange-400 flex items-center gap-1 transition-colors">
+          Abrir inbox <ChevronRight size={10} />
+        </Link>
+      </div>
+      {reports.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground">
+          <Shield size={22} className="opacity-15" />
+          <p className="text-xs">Sem reports ou credenciais H1 não configuradas</p>
+        </div>
+      ) : (
+        <div className="divide-y" style={{ borderColor: 'rgba(249,115,22,0.07)' }}>
+          {reports.slice(0, 6).map(r => {
+            const st = H1_STATE_DOT[r.attributes.state] ?? H1_STATE_DOT.new
+            return (
+              <a key={r.id} href={`https://hackerone.com/reports/${r.id}`} target="_blank" rel="noopener noreferrer"
+                className="flex items-start gap-3 px-4 py-2.5 hover:bg-orange-500/[0.04] transition-colors group">
+                <span className={cn('w-1.5 h-1.5 rounded-full shrink-0 mt-1.5', st.dot)} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-medium truncate group-hover:text-orange-200 transition-colors">{r.attributes.title}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={cn('text-[10px] font-semibold', st.color)}>{st.label}</span>
+                    {r.attributes.severity_rating && r.attributes.severity_rating !== 'none' && (
+                      <span className="text-[10px] font-bold uppercase text-zinc-600">{r.attributes.severity_rating}</span>
+                    )}
+                    <span className="text-[10px] text-zinc-700">
+                      {new Date(r.attributes.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                    </span>
+                  </div>
+                </div>
+                <ExternalLink size={10} className="text-zinc-700 shrink-0 mt-1 group-hover:text-orange-400/60 transition-colors" />
+              </a>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
