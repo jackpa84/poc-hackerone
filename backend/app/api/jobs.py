@@ -97,6 +97,8 @@ async def create_job(data: JobCreate, user: User = Depends(get_current_user)):
         "recon", "dir_fuzz", "param_fuzz", "sub_fuzz", "idor",
         "port_scan", "dns_recon", "xss_scan", "sqli_scan",
         "param_discovery", "js_analysis", "secret_scan", "api_scan",
+        # Descoberta ampliada de ativos
+        "asn_enum", "github_recon", "cloud_enum",
     ]
     if data.type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail=f"Tipo inválido. Use: {VALID_TYPES}")

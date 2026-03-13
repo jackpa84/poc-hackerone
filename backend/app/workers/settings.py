@@ -45,11 +45,16 @@ from app.workers.secret_scanner  import task_run_secret_scan
 from app.workers.api_scanner     import task_run_api_scan
 
 # ── Workers automáticos (cron jobs) ───────────────────────────────────────
-from app.workers.scheduler  import task_auto_scheduler    # recon de targets
-from app.workers.seeder     import task_seed_programs     # seed novos usuários
-from app.workers.auto_sync  import (                      # H1 sync + pipeline sweep
+from app.workers.scheduler       import task_auto_scheduler    # recon de targets
+from app.workers.seeder          import task_seed_programs     # seed novos usuários
+from app.workers.auto_sync       import (                      # H1 sync + pipeline sweep
     task_auto_h1_sync,
     task_auto_pipeline_sweep,
+)
+from app.workers.asset_discovery import (                      # descoberta ampliada de ativos
+    task_asn_enum,
+    task_github_recon,
+    task_cloud_enum,
 )
 
 
@@ -104,6 +109,10 @@ class WorkerSettings:
         task_seed_programs,
         task_auto_h1_sync,
         task_auto_pipeline_sweep,
+        # Descoberta ampliada de ativos
+        task_asn_enum,
+        task_github_recon,
+        task_cloud_enum,
     ]
 
     cron_jobs = [

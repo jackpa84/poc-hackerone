@@ -36,6 +36,10 @@ JOB_TASK_MAP = {
     "js_analysis":      "task_run_js_analysis",
     "secret_scan":      "task_run_secret_scan",
     "api_scan":         "task_run_api_scan",
+    # Descoberta ampliada de ativos
+    "asn_enum":         "task_asn_enum",
+    "github_recon":     "task_github_recon",
+    "cloud_enum":       "task_cloud_enum",
 }
 
 

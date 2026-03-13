@@ -3,7 +3,9 @@ kind: Deployment
 metadata:
   name: worker
 spec:
-  replicas: 4
+  replicas: 2
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: worker
@@ -19,7 +21,7 @@ spec:
         command: ["arq", "app.workers.settings.WorkerSettings"]
         resources:
           requests:
-            cpu: 500m
+            cpu: 250m
             memory: 512Mi
           limits:
             cpu: "2"

@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     VIRUSTOTAL_API_KEY: str = ""       # VirusTotal (subfinder)
     SECURITYTRAILS_TOKEN: str = ""     # SecurityTrails (subfinder)
 
+    # Asset Discovery — APIs para descoberta ampliada de alvos
+    GITHUB_TOKEN: str = ""             # GitHub PAT (sem token: 10 req/min; com token: 30/min)
+
     # Worker — número máximo de jobs concorrentes por instância
     MAX_JOBS: int = 10
 

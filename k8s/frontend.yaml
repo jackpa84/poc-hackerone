@@ -27,16 +27,17 @@ spec:
             memory: 512Mi
         env:
         - name: NEXT_PUBLIC_API_URL
-          value: "http://localhost:8000/api"
+          value: "http://backend:8000/api"
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: frontend
 spec:
-  type: LoadBalancer
+  type: NodePort
   selector:
     app: frontend
   ports:
   - port: 80
     targetPort: 3000
+    nodePort: 30080
