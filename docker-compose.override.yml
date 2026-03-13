@@ -1,0 +1,59 @@
+# Override para desenvolvimento local (Colima / Docker Desktop)
+# Remove limites de CPU/memória configurados para OrbStack M4 24GB
+services:
+  mongodb:
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    command: mongod --wiredTigerCacheSizeGB 0.5
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+
+  backend:
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    environment:
+      WEB_CONCURRENCY: 2
+
+  worker:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    environment:
+      MAX_JOBS: 5
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.1"
