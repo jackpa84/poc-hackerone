@@ -1,12 +1,193 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Bug, RefreshCw, AlertCircle, ExternalLink, Info } from 'lucide-react'
+import { Bug, RefreshCw, AlertCircle, ExternalLink, Info, Plus, X, Loader2 } from 'lucide-react'
 import { RichTooltip } from '@/components/ui/rich-tooltip'
 import { SkeletonCard } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import type { Finding } from '@/types/api'
+
+// ── Modal de Criar Finding ─────────────────────────────────────────────────
+
+function NewFindingModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [form, setForm] = useState({
+    title: '',
+    type: 'other',
+    severity: 'medium',
+    affected_url: '',
+    parameter: '',
+    payload: '',
+    description: '',
+    steps_to_reproduce: '',
+    impact: '',
+    cvss_score: '',
+  })
+
+  const set = (k: string, v: string) => setForm(prev => ({ ...prev, [k]: v }))
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      const payload: Record<string, unknown> = { ...form }
+      if (!payload.cvss_score) delete payload.cvss_score
+      else payload.cvss_score = parseFloat(payload.cvss_score as string)
+      if (!payload.parameter) delete payload.parameter
+      if (!payload.payload) delete payload.payload
+      await api.post('/findings', payload)
+      onCreated()
+      onClose()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(typeof msg === 'string' ? msg : 'Erro ao criar finding')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full bg-zinc-900 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500/60 placeholder:text-zinc-600'
+  const labelCls = 'block text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide'
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-red-500/15"><Bug size={16} className="text-red-400" /></div>
+              <div>
+                <h2 className="text-base font-semibold">Novo Finding</h2>
+                <p className="text-xs text-muted-foreground">Crie um finding manualmente para gerar relatório com IA</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors">
+              <X size={16} className="text-muted-foreground" />
+            </button>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
+            {/* Título */}
+            <div>
+              <label className={labelCls}>Título <span className="text-red-400">*</span></label>
+              <input required value={form.title} onChange={e => set('title', e.target.value)}
+                className={inputCls} placeholder='Ex: "IDOR em /api/v1/users/{id} — acesso a dados de outros usuários"' />
+              <p className="text-[10px] text-zinc-600 mt-1">Seja específico. Inclua o tipo de vuln e o endpoint.</p>
+            </div>
+
+            {/* Tipo + Severidade */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelCls}>Tipo <span className="text-red-400">*</span></label>
+                <select value={form.type} onChange={e => set('type', e.target.value)} className={inputCls}>
+                  <option value="idor">IDOR</option>
+                  <option value="xss">XSS</option>
+                  <option value="sqli">SQL Injection</option>
+                  <option value="ssrf">SSRF</option>
+                  <option value="lfi">LFI/RFI</option>
+                  <option value="open_redirect">Open Redirect</option>
+                  <option value="info_disclosure">Info Disclosure</option>
+                  <option value="other">Outro</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Severidade <span className="text-red-400">*</span></label>
+                <select value={form.severity} onChange={e => set('severity', e.target.value)} className={inputCls}>
+                  <option value="critical">Critical (9.0–10.0)</option>
+                  <option value="high">High (7.0–8.9)</option>
+                  <option value="medium">Medium (4.0–6.9)</option>
+                  <option value="low">Low (0.1–3.9)</option>
+                  <option value="informational">Informational</option>
+                </select>
+              </div>
+            </div>
+
+            {/* URL + CVSS */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelCls}>URL Afetada</label>
+                <input value={form.affected_url} onChange={e => set('affected_url', e.target.value)}
+                  className={inputCls} placeholder="https://api.example.com/v1/users/123" />
+              </div>
+              <div>
+                <label className={labelCls}>CVSS Score</label>
+                <input type="number" min="0" max="10" step="0.1" value={form.cvss_score}
+                  onChange={e => set('cvss_score', e.target.value)}
+                  className={inputCls} placeholder="ex: 8.5" />
+              </div>
+            </div>
+
+            {/* Parâmetro + Payload */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelCls}>Parâmetro Vulnerável</label>
+                <input value={form.parameter} onChange={e => set('parameter', e.target.value)}
+                  className={inputCls} placeholder="ex: id, user_id, token" />
+              </div>
+              <div>
+                <label className={labelCls}>Payload / Prova</label>
+                <input value={form.payload} onChange={e => set('payload', e.target.value)}
+                  className={inputCls} placeholder="ex: ../../../etc/passwd" />
+              </div>
+            </div>
+
+            {/* Descrição */}
+            <div>
+              <label className={labelCls}>Descrição <span className="text-red-400">*</span></label>
+              <textarea required rows={3} value={form.description} onChange={e => set('description', e.target.value)}
+                className={inputCls} placeholder="O que é a vulnerabilidade? Onde está? Por que existe? (mín. 100 chars para score alto)" />
+              <p className={cn('text-[10px] mt-1', form.description.length >= 100 ? 'text-emerald-400' : 'text-zinc-600')}>
+                {form.description.length}/100 chars mínimos
+              </p>
+            </div>
+
+            {/* Passos */}
+            <div>
+              <label className={labelCls}>Passos para Reproduzir <span className="text-red-400">*</span></label>
+              <textarea required rows={3} value={form.steps_to_reproduce} onChange={e => set('steps_to_reproduce', e.target.value)}
+                className={inputCls} placeholder="1. Faça login como usuário A&#10;2. Acesse /api/v1/users/99999&#10;3. Observe que retorna dados de outro usuário (mín. 50 chars)" />
+              <p className={cn('text-[10px] mt-1', form.steps_to_reproduce.length >= 50 ? 'text-emerald-400' : 'text-zinc-600')}>
+                {form.steps_to_reproduce.length}/50 chars mínimos
+              </p>
+            </div>
+
+            {/* Impacto */}
+            <div>
+              <label className={labelCls}>Impacto <span className="text-red-400">*</span></label>
+              <textarea required rows={2} value={form.impact} onChange={e => set('impact', e.target.value)}
+                className={inputCls} placeholder="O que um atacante pode fazer? Quantos usuários afeta? Dados expostos? (mín. 50 chars)" />
+              <p className={cn('text-[10px] mt-1', form.impact.length >= 50 ? 'text-emerald-400' : 'text-zinc-600')}>
+                {form.impact.length}/50 chars mínimos
+              </p>
+            </div>
+
+            {error && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+          </form>
+
+          {/* Footer */}
+          <div className="px-5 py-4 border-t border-border flex justify-between items-center shrink-0">
+            <p className="text-xs text-zinc-500">Após criar, mude o status para <strong className="text-blue-400">Aceito</strong> e execute o Pipeline para gerar o relatório com IA.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors">
+                Cancelar
+              </button>
+              <button onClick={handleSubmit} disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm font-semibold hover:bg-red-500/30 transition-colors disabled:opacity-50">
+                {saving ? <><Loader2 size={14} className="animate-spin" /> Criando…</> : <><Plus size={14} /> Criar Finding</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
 
 const SEV_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   critical:      { bg: 'bg-red-500/15',    text: 'text-red-400',    border: 'border-red-500/30' },
@@ -40,6 +221,7 @@ export default function FindingsPage() {
   const [loading, setLoading] = useState(true)
   const [sevFilter, setSevFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [showNewModal, setShowNewModal] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -94,6 +276,12 @@ export default function FindingsPage() {
             <p className="text-sm text-muted-foreground">{findings.length} vulnerabilidade{findings.length !== 1 ? 's' : ''}</p>
           </div>
         </div>
+        <button
+          onClick={() => setShowNewModal(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-sm font-semibold hover:bg-red-500/25 transition-colors"
+        >
+          <Plus size={15} /> Novo Finding
+        </button>
         <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors">
           <RefreshCw size={14} className="text-muted-foreground" />
         </button>
@@ -242,6 +430,13 @@ export default function FindingsPage() {
             )
           })}
         </div>
+      )}
+
+      {showNewModal && (
+        <NewFindingModal
+          onClose={() => setShowNewModal(false)}
+          onCreated={() => { load(); setShowNewModal(false) }}
+        />
       )}
     </div>
   )

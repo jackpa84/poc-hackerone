@@ -1,10 +1,10 @@
 """
 models/report.py — Coleção 'reports'
 
-Um Report é um relatório gerado pela IA (Claude) pronto para submissão
+Um Report é um relatório gerado pela IA (Claude/Ollama) pronto para submissão
 na HackerOne.
 
-O Claude recebe os dados do Finding e gera um relatório no formato
+O modelo de IA recebe os dados do Finding e gera um relatório no formato
 esperado pela plataforma: título, severidade, descrição, passos para
 reproduzir, impacto e evidências.
 
@@ -14,6 +14,8 @@ qualidade, seções faltando e aderência ao formato HackerOne.
 from datetime import datetime
 from typing import Optional, Any, Dict
 from beanie import Document
+from beanie.odm.actions import before_event, EventTypes
+from pymongo import IndexModel, ASCENDING
 
 
 class Report(Document):
@@ -22,7 +24,8 @@ class Report(Document):
 
     # Conteúdo gerado pela IA
     content_markdown: Optional[str] = None  # None enquanto está gerando
-    model_used: str = "claude-sonnet-4-6"
+    model_used: str = "claude-sonnet-4-6"   # Mantido por compatibilidade
+    model_used_actual: Optional[str] = None # Qual IA realmente gerou (ex: "ollama/xploiter", "claude-sonnet-4-6")
 
     # Métricas de uso da API (para controle de custo)
     prompt_tokens: int = 0
@@ -39,7 +42,19 @@ class Report(Document):
     is_ready: bool = False                       # True após revisão aprovada ou override manual
 
     created_at: datetime = datetime.utcnow()
+    updated_at: datetime = datetime.utcnow()
+
+    @before_event(EventTypes.SAVE, EventTypes.REPLACE, EventTypes.SAVE_CHANGES)
+    def refresh_updated_at(self):
+        self.updated_at = datetime.utcnow()
 
     class Settings:
         name = "reports"
-        indexes = ["user_id", "finding_id"]
+        indexes = [
+            "user_id",
+            "finding_id",
+            # Compound: lookup eficiente por finding
+            IndexModel([("user_id", ASCENDING), ("finding_id", ASCENDING)]),
+            # Filtrar por is_ready
+            IndexModel([("user_id", ASCENDING), ("is_ready", ASCENDING)]),
+        ]

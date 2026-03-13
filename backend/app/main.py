@@ -57,7 +57,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS — permite que o frontend (localhost:3000) acesse a API (localhost:8000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://0.0.0.0:3000", "http://frontend:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://0.0.0.0:3000",
+        "http://frontend:3000",
+        "https://a986-2804-d55-807d-3c00-2544-2883-ae3d-d778.ngrok-free.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

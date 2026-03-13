@@ -1,0 +1,73 @@
+# ── Workers ARQ — Deployment com SCC privileged ───────────────────────────────
+#
+# ATENÇÃO: workers montam /var/run/docker.sock para executar ferramentas de scan
+# (nuclei, sqlmap, ffuf) via Docker. Isso exige SCC privileged no OpenShift.
+#
+# Alternativas mais seguras a considerar:
+#   1. Podman socket (/run/user/1000/podman/podman.sock) com SCC anyuid
+#   2. Sidecar DinD (Docker-in-Docker) com socket local
+#   3. Tekton Tasks para orquestrar os scans fora dos workers ARQ
+#
+# Se os scan tools estiverem instalados diretamente na imagem (sem Docker),
+# remova o volume docker.sock e mude serviceAccountName para backend-sa.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: bugbounty
+  labels:
+    app: worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      securityContext:
+        runAsNonRoot: false   # necessário para privileged + docker socket
+      terminationGracePeriodSeconds: 120   # aguarda jobs em andamento terminarem
+      containers:
+      - name: worker
+        image: jackpa/bugbounty-backend:v1
+        imagePullPolicy: IfNotPresent
+        command: ["arq", "app.workers.settings.WorkerSettings"]
+        envFrom:
+        - secretRef:
+            name: bugbounty-secrets
+        - configMapRef:
+            name: bugbounty-config
+        env:
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bugbounty-secrets
+              key: MONGO_PASSWORD
+        - name: MONGO_URI
+          value: "mongodb://admin:$(MONGO_PASSWORD)@mongodb:27017/bugbounty?authSource=admin"
+        - name: MAX_JOBS
+          value: "15"
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+        securityContext:
+          privileged: true      # obrigatório para /var/run/docker.sock
+          allowPrivilegeEscalation: true
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket

@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     HACKERONE_API_USERNAME: str = ""  # nome preferido
     HACKERONE_API_TOKEN: str = ""
 
+    # Recon — APIs opcionais para ampliar descoberta de subdomínios/URLs
+    URLSCAN_API_KEY: str = ""          # urlscan.io (sem key: 100 resultados; com key: mais)
+    OTX_API_KEY: str = ""              # AlienVault OTX (sem key funciona com rate limit)
+    SHODAN_API_KEY: str = ""           # Shodan (subfinder)
+    CENSYS_API_ID: str = ""            # Censys API ID (subfinder)
+    CENSYS_API_SECRET: str = ""        # Censys API Secret (subfinder)
+    CHAOS_API_KEY: str = ""            # ProjectDiscovery Chaos
+    VIRUSTOTAL_API_KEY: str = ""       # VirusTotal (subfinder)
+    SECURITYTRAILS_TOKEN: str = ""     # SecurityTrails (subfinder)
+
     # Worker — número máximo de jobs concorrentes por instância
     MAX_JOBS: int = 10
 

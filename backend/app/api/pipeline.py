@@ -23,7 +23,7 @@ from app.models.user import User
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
-async def _enqueue_pipeline(user_id: str, finding_id: str) -> Job:
+async def _enqueue_pipeline(user_id: str, finding_id: str, team_handle: str | None = None) -> Job:
     """Cria um Job de pipeline e o enfileira no Redis."""
     job = Job(
         user_id=user_id,
@@ -31,6 +31,7 @@ async def _enqueue_pipeline(user_id: str, finding_id: str) -> Job:
         status="pending",
         config={
             "finding_id": finding_id,
+            "team_handle": team_handle,
         },
         logs=[f"[{datetime.utcnow().strftime('%H:%M:%S')}] Pipeline enfileirado"],
     )
@@ -59,11 +60,20 @@ class RunRequest(BaseModel):
 @router.post("/run")
 async def run_pipeline(data: RunRequest, user: User = Depends(get_current_user)):
     """Dispara o pipeline completo para um finding específico."""
+    import re
     from bson import ObjectId
 
     finding = await Finding.get(ObjectId(data.finding_id))
     if not finding or finding.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Finding não encontrado")
+
+    # Valida formato do team_handle antes de enfileirar (evita erro tardio na submissão H1)
+    if data.team_handle and not data.dry_run:
+        if not re.match(r"^[a-z0-9][a-z0-9\-]{1,}[a-z0-9]$", data.team_handle):
+            raise HTTPException(
+                status_code=422,
+                detail="team_handle inválido: use apenas letras minúsculas, números e hífens (ex: empresa-sec)"
+            )
 
     # Dry run → força o handle para o sandbox oficial do HackerOne
     effective_handle = H1_SANDBOX_HANDLE if data.dry_run else data.team_handle
@@ -88,6 +98,7 @@ async def run_pipeline(data: RunRequest, user: User = Depends(get_current_user))
 async def run_pipeline_all(user: User = Depends(get_current_user)):
     """
     Executa o pipeline para todos os findings com status 'accepted'.
+    Pula findings que já têm um job ativo (running ou pending).
     Ideal para processar em lote após triagem.
     """
     uid = str(user.id)
@@ -102,16 +113,15 @@ async def run_pipeline_all(user: User = Depends(get_current_user)):
 
     queued_jobs = []
     for finding in accepted:
+        fid = str(finding.id)
+        # Usa raw MongoDB filter para query em campo aninhado (config.finding_id)
         existing = await Job.find_one(
-            Job.user_id == uid,
-            Job.type == "pipeline",
-            Job.status == "running",
-            Job.config.get("finding_id") == str(finding.id),  # type: ignore
+            {"user_id": uid, "type": "pipeline", "status": {"$in": ["running", "pending"]}, "config.finding_id": fid}
         )
         if existing:
             continue
 
-        job = await _enqueue_pipeline(uid, str(finding.id))
+        job = await _enqueue_pipeline(uid, fid)
         queued_jobs.append({"job_id": str(job.id), "finding": finding.title})
 
     return {
@@ -257,13 +267,14 @@ async def analyze_finding(data: RunRequest, user: User = Depends(get_current_use
         report_id = str(report.id)
     else:
         try:
-            markdown, pt, ct = await generate_report(finding)
+            markdown, pt, ct, model_used = await generate_report(finding)
             new_report = Report(
                 user_id=uid,
                 finding_id=data.finding_id,
                 content_markdown=markdown,
                 prompt_tokens=pt,
                 completion_tokens=ct,
+                model_used_actual=model_used,
                 is_ready=True,
             )
             await new_report.insert()

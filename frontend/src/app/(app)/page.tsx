@@ -7,12 +7,16 @@ import {
   AlertCircle, ExternalLink, ChevronRight, ChevronDown, Clock, CheckCircle2, XCircle,
   Info, Shield, Crosshair, Activity,
   BrainCircuit, Radio, Terminal, X, Send, FileText, Loader2,
-  Globe2, Network, Key, Search, Link2, Layers, TrendingUp, Briefcase,
+  Globe2, Network, Key, Search, Link2, Layers, TrendingUp, Briefcase, ArrowRight,
 } from 'lucide-react'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
+} from 'recharts'
 import { SkeletonCard, SkeletonKPI, Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import { useRealtimeContext } from '@/contexts/RealtimeContext'
+import { DashLearningSection } from '@/components/dashboard/LearningSection'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -399,9 +403,8 @@ function ContainerLogs() {
     if (loaded) fetchLogs(svc)
   }
 
-  useEffect(() => {
-    if (loaded) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [lines, loaded])
+  // Rolagem automática desativada ao carregar a página — usuário mantém posição
+  // useEffect(() => { if (loaded) bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines, loaded])
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden geo-shadow flex flex-col">
@@ -673,6 +676,8 @@ export default function DashboardPage() {
   const critHigh   = (bySev.critical ?? 0) + (bySev.high ?? 0)
   const inScope    = data?.targets_in_scope ?? 0
   const readyCount = readyToReport.length
+  const submittedCount = data?.by_status?.resolved ?? 0
+  const reportsReadyCount = rt.heartbeat?.total_reports_ready ?? rt.heartbeat?.total_reports ?? 0
 
   if (loading) return (
     <div className="space-y-6">
@@ -695,48 +700,81 @@ export default function DashboardPage() {
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-            {rt.connected && (
-              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-medium"
-                style={{ background: 'rgba(52,211,153,0.07)', borderColor: 'rgba(52,211,153,0.2)', color: '#34d399' }}>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                live
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
-          </p>
-        </div>
+        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
         <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-accent transition-colors">
           <RefreshCw size={14} className="text-muted-foreground" />
         </button>
       </div>
 
-      {/* ── Smart Action Banner ──────────────────────────────────────────── */}
-      {inScope === 0
-        ? <DashBanner v="blue"   icon={<Crosshair size={13} />} text={<>Nenhum target in-scope. <Link href="/programs" className="font-semibold underline">Adicione programas</Link> para o recon automático iniciar.</>} />
-        : readyCount > 0
-        ? <DashBanner v="violet" icon={<CheckCircle2 size={13} />} text={<><strong>{readyCount} finding{readyCount > 1 ? 's' : ''}</strong> pronto{readyCount > 1 ? 's' : ''} para relatório. <Link href="/pipeline" className="font-semibold underline">Abrir Pipeline →</Link></>} />
-        : critHigh > 0
-        ? <DashBanner v="orange" icon={<AlertCircle size={13} />} text={<><strong>{critHigh} Critical/High</strong> aguardam triagem. <Link href="/findings" className="font-semibold underline">Revisar Findings →</Link></>} />
-        : (data?.active_jobs ?? 0) > 0
-        ? <DashBanner v="emerald" icon={<Zap size={13} />} text={<><strong>{data!.active_jobs} job{data!.active_jobs > 1 ? 's' : ''}</strong> de recon em execução — novos findings detectados em tempo real.</>} />
-        : null
-      }
-
       {/* ── KPI Strip ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <DashKpi icon={<Bug size={14} />}          bg="bg-red-500/10"    color="text-red-400"    label="Total Bugs"      value={data?.total_findings ?? 0}                         href="/findings" />
-        <DashKpi icon={<DollarSign size={14} />}   bg="bg-emerald-500/10" color="text-emerald-400" label="Bounty Ganho"   value={`$${(data?.bounty_earned ?? 0).toLocaleString()}`} />
-        <DashKpi icon={<Crosshair size={14} />}    bg="bg-blue-500/10"   color="text-blue-400"   label="In-Scope"        value={data?.targets_in_scope ?? 0} />
-        <DashKpi icon={<Zap size={14} />}          bg="bg-yellow-500/10" color="text-yellow-400" label="Jobs Ativos"     value={data?.active_jobs ?? 0}                            href="/jobs"     pulse={!!(data?.active_jobs)} />
-        <DashKpi icon={<CheckCircle2 size={14} />} bg="bg-violet-500/10" color="text-violet-400" label="Prontos p/ Report" value={readyCount}                                     href="/pipeline" accent={readyCount > 0} />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <DashKpi icon={<Bug size={18} />}          bg="bg-red-500/10"    color="text-red-400"    label="Total Bugs"       value={data?.total_findings ?? 0}                         href="/findings" />
+        <DashKpi icon={<DollarSign size={18} />}   bg="bg-emerald-500/10" color="text-emerald-400" label="Bounty Ganho"    value={`$${(data?.bounty_earned ?? 0).toLocaleString()}`} />
+        <DashKpi icon={<Crosshair size={18} />}    bg="bg-blue-500/10"   color="text-blue-400"   label="In-Scope"         value={data?.targets_in_scope ?? 0} />
+        <DashKpi icon={<Zap size={18} />}          bg="bg-yellow-500/10" color="text-yellow-400" label="Jobs Ativos"      value={data?.active_jobs ?? 0}                            href="/jobs"     pulse={!!(data?.active_jobs)} />
+        <DashKpi icon={<BrainCircuit size={18} />} bg="bg-violet-500/10" color="text-violet-400" label="Relatórios IA"    value={rt.heartbeat?.total_reports_ready ?? rt.heartbeat?.total_reports ?? 0} href="/pipeline" accent={((rt.heartbeat?.total_reports_ready ?? rt.heartbeat?.total_reports ?? 0) > 0)} />
+        <DashKpi icon={<CheckCircle2 size={18} />} bg="bg-violet-500/10" color="text-violet-400" label="Prontos p/ Report" value={readyCount}                                     href="/pipeline" accent={readyCount > 0} />
       </div>
 
-      {/* ── Severity Breakdown ──────────────────────────────────────────── */}
+      {/* ── Barra de progresso (contagem regressiva para envio) ────────────── */}
+      <DashReportProgressBar
+        totalFindings={data?.total_findings ?? 0}
+        acceptedCount={readyCount}
+        reportsReadyCount={reportsReadyCount}
+        submittedCount={submittedCount}
+      />
+
+      {/* ── Severity + Status (gráficos) ──────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-border p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4 flex items-center gap-2">
+            <Shield size={16} /> Findings por severidade
+          </h2>
+          <div className="h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={SEV_BAR_CFG.map(({ key, label }) => ({ name: label, count: bySev[key] ?? 0 }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 13 }} stroke="#71717a" />
+                <YAxis tick={{ fontSize: 13 }} stroke="#71717a" allowDecimals={false} />
+                <RechartsTooltip contentStyle={{ fontSize: 13, background: '#18181b', border: '1px solid #27272a' }} formatter={(v: number) => [v, 'Findings']} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {SEV_BAR_CFG.map((_, i) => (
+                    <Cell key={i} fill={['#ef4444', '#f97316', '#eab308', '#3b82f6', '#71717a'][i]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4 flex items-center gap-2">
+            <Activity size={16} /> Findings por status
+          </h2>
+          <div className="h-[220px]">
+            {Object.keys(data?.by_status ?? {}).length === 0 ? (
+              <div className="flex items-center justify-center h-full text-zinc-500 text-sm">Nenhum finding ainda</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={Object.entries(data?.by_status ?? {}).map(([name, count]) => ({ name: name === 'new' ? 'Novo' : name === 'triaging' ? 'Triagem' : name === 'accepted' ? 'Aceito' : name === 'resolved' ? 'Resolvido' : name, count }))}
+                    cx="50%" cy="50%" innerRadius={40} outerRadius={65}
+                    paddingAngle={2} dataKey="count" nameKey="name"
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {Object.entries(data?.by_status ?? {}).map((_, i) => (
+                      <Cell key={i} fill={['#3b82f6', '#eab308', '#22c55e', '#a855f7', '#71717a'][i % 5]} />
+                    ))}
+                  </Pie>
+<RechartsTooltip contentStyle={{ fontSize: 13, background: '#18181b', border: '1px solid #27272a' }} formatter={(v: number) => [v, 'Findings']} />
+                <Legend fontSize={13} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Severity Breakdown (barra compacta) ────────────────────────────── */}
       <DashSeverityBar bySev={bySev} total={totalBySev} />
 
       {/* ── Main 2-col Grid ─────────────────────────────────────────────── */}
@@ -750,11 +788,20 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Painel de Monitoramento em Tempo Real ─────────────────────────── */}
+      <DashMonitor rt={rt} />
+
+      {/* ── Saúde dos Pods / Containers ──────────────────────────────────── */}
+      <DashPodHealth rt={rt} />
+
       {/* ── Bottom Row ──────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <DashH1Inbox reports={h1Reports} />
         <SystemActivityLog rt={rt} recentJobs={recentJobs} />
       </div>
+
+      {/* ── Seção educativa ──────────────────────────────────────────────── */}
+      <DashLearningSection bySev={bySev} byStatus={data?.by_status ?? {}} totalFindings={data?.total_findings ?? 0} />
 
       {selectedFinding && (
         <ReportDrawer finding={selectedFinding} onClose={() => setSelectedFinding(null)} />
@@ -1782,7 +1829,7 @@ function SystemActivityLog({
   recentJobs: JobItem[]
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
-  const [autoScroll, setAutoScroll] = useState(true)
+  const [autoScroll, setAutoScroll] = useState(false)
   const [svcFilter, setSvcFilter] = useState<string | null>(null)
   const [containerLines, setContainerLines] = useState<ContainerLine[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
@@ -1969,18 +2016,21 @@ function SystemActivityLog({
       </div>
 
       {/* Footer status bar */}
-      <div className="flex items-center gap-4 px-4 py-2 border-t border-border bg-zinc-900/60 text-[10px] font-mono text-zinc-600">
+      <div className="flex flex-wrap items-center gap-4 px-4 py-2 border-t border-border bg-zinc-900/60 text-[10px] font-mono text-zinc-600">
         <span className="text-emerald-500/70">
           ● {rt.heartbeat?.active_jobs ?? 0} job{(rt.heartbeat?.active_jobs ?? 0) !== 1 ? 's' : ''} ativos
         </span>
         <span className="text-red-500/70">
-          ● {rt.findingEvents.length} finding{rt.findingEvents.length !== 1 ? 's' : ''} detectado{rt.findingEvents.length !== 1 ? 's' : ''} nesta sessão
+          ● {rt.findingEvents.length} finding{rt.findingEvents.length !== 1 ? 's' : ''} nesta sessão
+        </span>
+        <span className="text-violet-500/70">
+          ● {rt.heartbeat?.total_reports_ready ?? rt.heartbeat?.total_reports ?? 0} relatório{(rt.heartbeat?.total_reports_ready ?? rt.heartbeat?.total_reports ?? 0) !== 1 ? 's' : ''} IA
         </span>
         <span className="text-violet-500/70">
           ● {rt.pipelineEvents.filter(e => e.submitted).length} submetido{rt.pipelineEvents.filter(e => e.submitted).length !== 1 ? 's' : ''} ao H1
         </span>
-        <span className="ml-auto">
-          {rt.heartbeat ? new Date().toLocaleTimeString('pt-BR') : '—'}
+        <span className="ml-auto text-zinc-500">
+          {rt.connected && rt.lastUpdate ? `Última atualização: ${new Date(rt.lastUpdate).toLocaleTimeString('pt-BR')}` : rt.connected ? 'Conectado' : 'Offline'}
         </span>
       </div>
     </div>
@@ -2470,6 +2520,297 @@ const DASH_BANNER_STYLES = {
   emerald: { bg: 'rgba(16,185,129,0.06)', border: 'rgba(16,185,129,0.2)',  color: '#34d399' },
 }
 
+// ── Pod / Container Health ─────────────────────────────────────────────────
+
+const SVC_META: Record<string, { label: string; desc: string; color: string }> = {
+  backend:       { label: 'Backend API',  desc: 'FastAPI — uvicorn',         color: 'text-blue-400' },
+  worker:        { label: 'Worker',       desc: 'ARQ — recon jobs',          color: 'text-violet-400' },
+  frontend:      { label: 'Frontend',     desc: 'Next.js — interface',       color: 'text-cyan-400' },
+  mongodb:       { label: 'MongoDB',      desc: 'Banco de dados principal',  color: 'text-green-400' },
+  redis:         { label: 'Redis',        desc: 'Fila de jobs + cache',      color: 'text-orange-400' },
+  'mongo-express': { label: 'Mongo UI',  desc: 'Admin interface',           color: 'text-zinc-400' },
+}
+
+function PodStatusDot({ state }: { state: string }) {
+  if (state === 'running') return <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+  if (state === 'exited')  return <span className="w-2.5 h-2.5 rounded-full bg-red-400 shrink-0" />
+  return <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0" />
+}
+
+function MiniBar({ value, max = 100, color }: { value: number | null; max?: number; color: string }) {
+  if (value === null) return <span className="text-zinc-600 text-[10px]">—</span>
+  const pct = Math.min(100, (value / max) * 100)
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="w-16 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className={cn('h-full rounded-full transition-all duration-500', color)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-[11px] tabular-nums text-muted-foreground w-10 text-right">{value.toFixed(1)}%</span>
+    </div>
+  )
+}
+
+function DashPodHealth({ rt }: { rt: ReturnType<typeof import('@/hooks/useRealtime').useRealtime> }) {
+  const containers = rt.heartbeat?.containers ?? []
+  const running    = containers.filter(c => c.state === 'running').length
+  const total      = containers.length
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)' }}>
+      {/* Header tipo terminal */}
+      <div className="px-4 py-3 border-b border-border bg-zinc-900/60 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* Botões macOS */}
+          <div className="flex gap-1.5">
+            <div className="w-3 h-3 rounded-full bg-red-500/70" />
+            <div className="w-3 h-3 rounded-full bg-yellow-500/70" />
+            <div className="w-3 h-3 rounded-full bg-emerald-500/70" />
+          </div>
+          <span className="text-xs font-semibold font-mono text-muted-foreground">pods.health</span>
+          <div className={cn('flex items-center gap-1.5 text-[10px] font-mono', rt.connected ? 'text-emerald-400' : 'text-zinc-500')}>
+            <Radio size={9} className={rt.connected ? 'animate-pulse' : ''} />
+            {rt.connected ? 'live' : 'offline'}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-mono">
+          <span className={cn(running === total && total > 0 ? 'text-emerald-400' : 'text-yellow-400')}>
+            {running}/{total} running
+          </span>
+          {rt.heartbeat?.queue_depth != null && (
+            <span className="text-zinc-500">
+              queue: <span className="text-yellow-400">{rt.heartbeat.queue_depth}</span>
+            </span>
+          )}
+          {rt.heartbeat?.workers_active != null && (
+            <span className="text-zinc-500">
+              workers: <span className="text-violet-400">{rt.heartbeat.workers_active}</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Tabela de containers */}
+      {containers.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground">
+          <Activity size={22} className="opacity-20" />
+          <p className="text-xs font-mono">
+            {rt.connected ? 'Aguardando dados dos containers…' : 'SSE desconectado — sem dados de saúde'}
+          </p>
+          <p className="text-[10px] text-zinc-600">O Docker socket precisa estar montado no backend</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-zinc-900/40">
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider w-4">●</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">Serviço</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">CPU</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">Memória</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">Mem MB</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">Uptime</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {containers.map(c => {
+                const meta = SVC_META[c.name] ?? { label: c.name, desc: '', color: 'text-zinc-400' }
+                const uptime = c.started_at
+                  ? (() => {
+                      const secs = Math.floor((Date.now() - new Date(c.started_at).getTime()) / 1000)
+                      if (secs < 60) return `${secs}s`
+                      if (secs < 3600) return `${Math.floor(secs / 60)}m`
+                      return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`
+                    })()
+                  : '—'
+                return (
+                  <tr key={c.name} className="hover:bg-accent/20 transition-colors">
+                    <td className="px-4 py-3">
+                      <PodStatusDot state={c.state} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className={cn('text-sm font-semibold', meta.color)}>{meta.label}</p>
+                      <p className="text-[10px] text-zinc-500 font-mono">{meta.desc}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn(
+                        'text-[11px] font-mono px-2 py-0.5 rounded',
+                        c.state === 'running'
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : c.state === 'exited'
+                          ? 'bg-red-500/15 text-red-400'
+                          : 'bg-yellow-500/15 text-yellow-400'
+                      )}>
+                        {c.state}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <MiniBar value={c.cpu_pct} color={
+                        (c.cpu_pct ?? 0) > 80 ? 'bg-red-500' :
+                        (c.cpu_pct ?? 0) > 50 ? 'bg-yellow-500' : 'bg-emerald-500'
+                      } />
+                    </td>
+                    <td className="px-4 py-3">
+                      <MiniBar value={c.mem_pct} color={
+                        (c.mem_pct ?? 0) > 85 ? 'bg-red-500' :
+                        (c.mem_pct ?? 0) > 60 ? 'bg-yellow-500' : 'bg-blue-500'
+                      } />
+                    </td>
+                    <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground">
+                      {c.mem_mb != null ? `${c.mem_mb} MB` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground">
+                      {uptime}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center gap-4 px-4 py-2 border-t border-border bg-zinc-900/40 text-[10px] font-mono text-zinc-600">
+        <span>
+          <span className="text-emerald-400">{running}</span> running
+          {total - running > 0 && <span className="text-red-400 ml-2">{total - running} stopped</span>}
+        </span>
+        <span>|</span>
+        <span>CPU total: <span className="text-yellow-400">
+          {containers.filter(c => c.cpu_pct != null).reduce((s, c) => s + (c.cpu_pct ?? 0), 0).toFixed(1)}%
+        </span></span>
+        <span>Mem total: <span className="text-blue-400">
+          {containers.filter(c => c.mem_mb != null).reduce((s, c) => s + (c.mem_mb ?? 0), 0).toFixed(0)} MB
+        </span></span>
+        <span className="ml-auto">
+          atualiza a cada 3s via SSE
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Monitor em Tempo Real ──────────────────────────────────────────────────
+
+function DashMonitor({ rt }: { rt: ReturnType<typeof import('@/hooks/useRealtime').useRealtime> }) {
+  const hb = rt.heartbeat
+
+  const METRICS = [
+    // Coluna 1: Findings
+    {
+      group: 'Findings',
+      color: 'text-red-400',
+      border: 'border-red-500/20',
+      bg: 'rgba(239,68,68,0.04)',
+      items: [
+        { label: 'Total', value: hb?.total_findings ?? '—', highlight: false },
+        { label: 'Última 1h', value: hb?.findings_1h ?? 0, highlight: (hb?.findings_1h ?? 0) > 0 },
+        { label: 'Últimas 24h', value: hb?.findings_24h ?? 0, highlight: (hb?.findings_24h ?? 0) > 0 },
+        { label: 'Critical', value: hb?.by_severity?.critical ?? 0, highlight: (hb?.by_severity?.critical ?? 0) > 0 },
+        { label: 'High', value: hb?.by_severity?.high ?? 0, highlight: (hb?.by_severity?.high ?? 0) > 0 },
+        { label: 'Aceitos', value: hb?.by_status?.accepted ?? 0, highlight: (hb?.by_status?.accepted ?? 0) > 0 },
+      ],
+    },
+    // Coluna 2: Jobs / Workers
+    {
+      group: 'Jobs & Workers',
+      color: 'text-yellow-400',
+      border: 'border-yellow-500/20',
+      bg: 'rgba(234,179,8,0.04)',
+      items: [
+        { label: 'Jobs ativos', value: hb?.active_jobs ?? '—', highlight: (hb?.active_jobs ?? 0) > 0 },
+        { label: 'Fila ARQ', value: hb?.queue_depth ?? 0, highlight: (hb?.queue_depth ?? 0) > 0 },
+        { label: 'Workers', value: hb?.workers_active ?? '—', highlight: false },
+        { label: 'Concluídos hoje', value: hb?.completed_today ?? 0, highlight: false },
+        { label: 'Falhos hoje', value: hb?.failed_today ?? 0, highlight: (hb?.failed_today ?? 0) > 0 },
+        { label: 'Conexão SSE', value: rt.connected ? 'Online' : 'Offline', highlight: rt.connected },
+      ],
+    },
+    // Coluna 3: Pipeline / IA
+    {
+      group: 'Pipeline & IA',
+      color: 'text-violet-400',
+      border: 'border-violet-500/20',
+      bg: 'rgba(139,92,246,0.04)',
+      items: [
+        { label: 'Relatórios total', value: hb?.total_reports ?? '—', highlight: false },
+        { label: 'Prontos', value: hb?.total_reports_ready ?? 0, highlight: (hb?.total_reports_ready ?? 0) > 0 },
+        { label: 'Gerados hoje', value: hb?.reports_today ?? 0, highlight: false },
+        { label: 'Score médio IA', value: hb?.avg_review_score != null ? `${hb.avg_review_score}%` : '—', highlight: false },
+        { label: 'Bounty total', value: hb?.bounty_earned != null ? `$${hb.bounty_earned.toLocaleString()}` : '—', highlight: (hb?.bounty_earned ?? 0) > 0 },
+        { label: 'Último evento', value: rt.lastUpdate ? new Date(rt.lastUpdate).toLocaleTimeString('pt-BR') : '—', highlight: false },
+      ],
+    },
+    // Coluna 4: Infra
+    {
+      group: 'Infraestrutura',
+      color: 'text-emerald-400',
+      border: 'border-emerald-500/20',
+      bg: 'rgba(34,197,94,0.04)',
+      items: [
+        { label: 'Targets total', value: hb?.total_targets ?? '—', highlight: false },
+        { label: 'In-scope', value: hb?.targets_in_scope ?? '—', highlight: false },
+        { label: 'Recon 24h', value: hb?.targets_with_recon_24h ?? 0, highlight: false },
+        { label: 'Redis mem', value: hb?.redis_memory_mb != null ? `${hb.redis_memory_mb} MB` : '—', highlight: false },
+        { label: 'Eventos sessão', value: rt.jobEvents.length + rt.findingEvents.length + rt.pipelineEvents.length, highlight: false },
+        { label: 'Recon events', value: rt.reconEvents.length, highlight: rt.reconEvents.length > 0 },
+      ],
+    },
+  ]
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)' }}>
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity size={14} className={rt.connected ? 'text-emerald-400 animate-pulse' : 'text-zinc-500'} />
+          <span className="text-sm font-semibold">Monitoramento em Tempo Real</span>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {hb ? 'SSE ativo — heartbeat a cada 3s' : 'Aguardando conexão SSE…'}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className={cn(
+            'w-2 h-2 rounded-full',
+            rt.connected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
+          )} />
+          <span className="text-[10px] font-mono text-muted-foreground">
+            {rt.connected ? 'connected' : 'disconnected'}
+          </span>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-border">
+        {METRICS.map(group => (
+          <div key={group.group} className="p-4 space-y-2.5" style={{ background: group.bg }}>
+            <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-3', group.color)}>
+              {group.group}
+            </p>
+            {group.items.map(item => (
+              <div key={item.label} className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground truncate">{item.label}</span>
+                <span className={cn(
+                  'text-[12px] font-bold tabular-nums shrink-0',
+                  item.highlight ? group.color : 'text-foreground'
+                )}>
+                  {String(item.value)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {!hb && (
+        <div className="px-4 py-3 text-center text-xs text-zinc-500 border-t border-border">
+          Conectando ao stream SSE… As métricas aparecerão assim que a conexão for estabelecida.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DashBanner({ v, icon, text }: { v: keyof typeof DASH_BANNER_STYLES; icon: React.ReactNode; text: React.ReactNode }) {
   const s = DASH_BANNER_STYLES[v]
   return (
@@ -2487,17 +2828,125 @@ function DashKpi({ icon, bg, color, label, value, href, pulse, accent }: {
 }) {
   const card = (
     <div className={cn(
-      'relative p-4 rounded-xl border transition-all cursor-default',
+      'relative p-5 rounded-xl border transition-all cursor-default',
       accent ? 'border-violet-500/25' : 'border-border hover:border-border/60',
     )} style={{ background: accent ? 'rgba(139,92,246,0.06)' : 'rgba(255,255,255,0.02)' }}>
-      <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center mb-3', bg)}>
+      <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center mb-3', bg)}>
         <span className={cn(color, pulse && 'animate-pulse')}>{icon}</span>
       </div>
-      <p className={cn('text-2xl font-bold tabular-nums leading-none', accent ? 'text-violet-300' : 'text-foreground')}>{value}</p>
-      <p className="text-[11px] text-muted-foreground mt-1.5 font-medium leading-tight">{label}</p>
+      <p className={cn('text-3xl font-bold tabular-nums leading-none', accent ? 'text-violet-300' : 'text-foreground')}>{value}</p>
+      <p className="text-sm text-muted-foreground mt-2 font-medium leading-tight">{label}</p>
     </div>
   )
   return href ? <Link href={href} className="block">{card}</Link> : card
+}
+
+// ── Barra de progresso "temperatura" para envio do relatório ─────────────────
+
+const REPORT_STAGES = [
+  { key: 'findings', label: 'Findings detectados', sub: 'Recon encontrou vulnerabilidades', pct: 25, color: 'bg-zinc-500', fill: 'bg-zinc-400', href: '/findings', icon: Bug },
+  { key: 'accepted', label: 'Triagem → Aceito', sub: 'Pronto para gerar relatório', pct: 50, color: 'bg-yellow-600/50', fill: 'bg-yellow-500', href: '/findings', icon: CheckCircle2 },
+  { key: 'report', label: 'Relatório IA gerado', sub: 'Draft pronto para revisão', pct: 75, color: 'bg-violet-600/50', fill: 'bg-violet-500', href: '/pipeline', icon: BrainCircuit },
+  { key: 'submitted', label: 'Enviado ao H1', sub: 'Report submetido ao programa', pct: 100, color: 'bg-emerald-600/50', fill: 'bg-emerald-500', href: '/hackerone', icon: Send },
+] as const
+
+function DashReportProgressBar({
+  totalFindings,
+  acceptedCount,
+  reportsReadyCount,
+  submittedCount,
+}: {
+  totalFindings: number
+  acceptedCount: number
+  reportsReadyCount: number
+  submittedCount: number
+}) {
+  const stage1 = totalFindings > 0
+  const stage2 = acceptedCount > 0
+  const stage3 = reportsReadyCount > 0
+  const stage4 = submittedCount > 0
+
+  const currentStage = stage4 ? 4 : stage3 ? 3 : stage2 ? 2 : stage1 ? 1 : 0
+  const pct = currentStage === 0 ? 0 : currentStage === 1 ? 25 : currentStage === 2 ? 50 : currentStage === 3 ? 75 : 100
+
+  const counts = [
+    { key: 'findings', value: totalFindings, done: stage1 },
+    { key: 'accepted', value: acceptedCount, done: stage2 },
+    { key: 'report', value: reportsReadyCount, done: stage3 },
+    { key: 'submitted', value: submittedCount, done: stage4 },
+  ]
+
+  return (
+    <div className="rounded-xl border overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(139,92,246,0.2)' }}>
+      <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: 'rgba(139,92,246,0.12)', background: 'rgba(139,92,246,0.04)' }}>
+        <div className="flex items-center gap-2.5">
+          <Send size={18} className="text-violet-400" />
+          <span className="text-base font-semibold">Progresso até o envio do relatório</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {currentStage < 4 && (
+            <span className="text-sm text-muted-foreground">
+              Faltam <strong className="text-violet-400">{4 - currentStage}</strong> etapa{4 - currentStage !== 1 ? 's' : ''}
+            </span>
+          )}
+          <span className="text-sm font-mono font-bold text-violet-300 tabular-nums">{pct}%</span>
+        </div>
+      </div>
+      <div className="p-5 space-y-5">
+        {/* Barra tipo temperatura — 4 segmentos */}
+        <div className="flex h-4 rounded-full overflow-hidden bg-zinc-800/80 border border-zinc-700/50">
+          {REPORT_STAGES.map((stage, i) => {
+            const filled = (i + 1) <= currentStage
+            return (
+              <div
+                key={stage.key}
+                className={cn('flex-1 min-w-0 transition-all duration-500', filled ? stage.fill : 'bg-zinc-800')}
+                style={{ width: '25%' }}
+                title={`${stage.label}: ${counts[i].value}`}
+              />
+            )
+          })}
+        </div>
+        {/* Legenda com contagens */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {REPORT_STAGES.map((stage, i) => {
+            const Icon = stage.icon
+            const { value, done } = counts[i]
+            return (
+              <Link
+                key={stage.key}
+                href={stage.href}
+                className={cn(
+                  'flex items-start gap-3 px-4 py-3 rounded-lg border transition-colors',
+                  done ? 'border-violet-500/30 bg-violet-500/10' : 'border-border/60 bg-zinc-900/40 opacity-70'
+                )}
+              >
+                <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center shrink-0', done ? 'bg-violet-500/20 text-violet-400' : 'bg-zinc-700/50 text-zinc-500')}>
+                  <Icon size={16} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={cn('text-sm font-semibold leading-tight', done ? 'text-foreground' : 'text-muted-foreground')}>
+                    {stage.label}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{stage.sub}</p>
+                  <p className={cn('text-2xl font-bold tabular-nums mt-1', done ? 'text-violet-300' : 'text-zinc-500')}>
+                    {value}
+                  </p>
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+        <p className="text-sm text-zinc-500 text-center">
+          {currentStage === 0 && 'Adicione targets e rode o recon para obter findings.'}
+          {currentStage === 1 && 'Valide os findings em Findings e mova para "Aceito" para liberar o Pipeline.'}
+          {currentStage === 2 && 'Abra o Pipeline e execute para gerar o relatório com IA.'}
+          {currentStage === 3 && 'Revise o relatório no Pipeline e submeta ao programa no HackerOne.'}
+          {currentStage === 4 && 'Pelo menos um report já foi enviado. Acompanhe no HackerOne.'}
+        </p>
+      </div>
+    </div>
+  )
 }
 
 const SEV_BAR_CFG = [
@@ -2510,15 +2959,15 @@ const SEV_BAR_CFG = [
 
 function DashSeverityBar({ bySev, total }: { bySev: Record<string, number>; total: number }) {
   return (
-    <div className="p-4 rounded-xl border border-border" style={{ background: 'rgba(255,255,255,0.02)' }}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-          <Shield size={12} /> Severidade
+    <div className="p-5 rounded-xl border border-border" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          <Shield size={16} /> Severidade
         </h2>
-        <span className="text-[11px] text-muted-foreground">{total} findings</span>
+        <span className="text-sm text-muted-foreground">{total} findings</span>
       </div>
       {/* Stacked bar */}
-      <div className="flex h-1.5 rounded-full overflow-hidden gap-px mb-3">
+      <div className="flex h-2.5 rounded-full overflow-hidden gap-px mb-4">
         {SEV_BAR_CFG.map(({ key, bar }) => {
           const count = bySev[key] ?? 0
           if (!count) return null
@@ -2532,8 +2981,8 @@ function DashSeverityBar({ bySev, total }: { bySev: Record<string, number>; tota
           const count = bySev[key] ?? 0
           return (
             <div key={key} className="text-center">
-              <p className={cn('text-xl font-bold tabular-nums leading-none', text, !count && 'opacity-25')}>{count}</p>
-              <p className="text-[9px] text-muted-foreground uppercase tracking-wide mt-1">{label}</p>
+              <p className={cn('text-2xl font-bold tabular-nums leading-none', text, !count && 'opacity-25')}>{count}</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">{label}</p>
             </div>
           )
         })}
@@ -2548,7 +2997,7 @@ function DashPriorityQueue({ findings, onSelect }: { findings: FindingItem[]; on
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <AlertCircle size={13} className="text-orange-400" />
-          <span className="text-sm font-semibold">Fila de Prioridade</span>
+          <span className="text-base font-semibold">Fila de Prioridade</span>
           {findings.length > 0 && (
             <span className="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/25 text-orange-400 text-[10px] font-bold">
               {findings.length}
@@ -2576,7 +3025,7 @@ function DashPriorityQueue({ findings, onSelect }: { findings: FindingItem[]; on
                   {f.severity.slice(0, 4)}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-medium truncate">{f.title}</p>
+                  <p className="text-sm font-medium truncate">{f.title}</p>
                   <div className="flex items-center gap-2 mt-0.5">
                     {f.affected_url && <span className="text-[10px] text-zinc-600 truncate max-w-[160px]">{f.affected_url}</span>}
                     <span className={cn('text-[10px] font-medium shrink-0', st?.color ?? 'text-zinc-500')}>{st?.label ?? f.status}</span>
@@ -2600,7 +3049,7 @@ function DashReadyToReport({ findings }: { findings: FindingItem[] }) {
         style={{ borderColor: 'rgba(139,92,246,0.12)' }}>
         <div className="flex items-center gap-2">
           <CheckCircle2 size={13} className="text-violet-400" />
-          <span className="text-sm font-semibold">Prontos para Report</span>
+          <span className="text-base font-semibold">Prontos para Report</span>
           {findings.length > 0 && (
             <span className="px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/25 text-violet-400 text-[10px] font-bold">
               {findings.length}
@@ -2622,7 +3071,7 @@ function DashReadyToReport({ findings }: { findings: FindingItem[] }) {
             return (
               <div key={f.id} className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-violet-500/[0.03] transition-colors">
                 <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', sev.dot)} />
-                <p className="text-[11px] font-medium flex-1 truncate">{f.title}</p>
+                <p className="text-sm font-medium flex-1 truncate">{f.title}</p>
                 <span className={cn('text-[9px] font-bold uppercase shrink-0', sev.text)}>{f.severity.slice(0, 4)}</span>
               </div>
             )
@@ -2646,7 +3095,7 @@ function DashJobsFeed({ jobs }: { jobs: JobItem[] }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <Activity size={13} className="text-blue-400" />
-          <span className="text-sm font-semibold">Jobs Recentes</span>
+          <span className="text-base font-semibold">Jobs Recentes</span>
         </div>
         <Link href="/jobs" className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
           Ver todos <ChevronRight size={10} />
@@ -2665,7 +3114,7 @@ function DashJobsFeed({ jobs }: { jobs: JobItem[] }) {
             return (
               <div key={j.id} className="flex items-center gap-3 px-4 py-2.5">
                 <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />
-                <span className="text-[11px] font-medium text-zinc-300 shrink-0 w-16 truncate">
+                <span className="text-sm font-medium text-zinc-300 shrink-0 w-16 truncate">
                   {JOB_TYPE_SHORT[j.type] ?? j.type}
                 </span>
                 <span className={cn('text-[10px] font-semibold capitalize shrink-0', textCls)}>{j.status}</span>

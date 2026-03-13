@@ -1,0 +1,24 @@
+# ── ConfigMap — variáveis não-sensíveis ───────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bugbounty-config
+  namespace: bugbounty
+data:
+  # Banco de dados (credenciais no Secret)
+  MONGO_URI: "mongodb://admin:$(MONGO_PASSWORD)@mongodb:27017/bugbounty?authSource=admin"
+  REDIS_URL: "redis://redis:6379"
+
+  # Workers ARQ
+  MAX_JOBS: "15"
+  OLLAMA_TIMEOUT: "30"
+  RATE_LIMIT_PER_MINUTE: "120"
+  ENABLE_CACHING: "true"
+
+  # Ollama (ajuste para o endpoint do seu cluster ou deixe vazio se não usar)
+  OLLAMA_URL: "http://ollama:11434"
+  OLLAMA_MODEL: "xploiter/the-xploiter:latest"
+
+  # Frontend — aponta para o Route interno do backend
+  # Atualize após criar os Routes (oc get route backend -n bugbounty)
+  NEXT_PUBLIC_API_URL: "https://api-eb13-2804-d55-807d-3c00-2544-2883-ae3d-d778.ngrok-free.app/api"

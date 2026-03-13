@@ -79,11 +79,11 @@ export function RealtimeStatusBar() {
           {criticals > 0 && <span className="text-red-400 font-bold">({criticals} critical)</span>}
         </Link>
 
-        {/* Reports gerados */}
-        {(hb?.total_reports ?? 0) > 0 && (
+        {/* Reports gerados (prioriza "prontos" quando disponível) */}
+        {((hb?.total_reports_ready ?? hb?.total_reports ?? 0) > 0) && (
           <Link href="/pipeline" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors">
             <BrainCircuit size={11} className="text-violet-400" />
-            <span>{hb?.total_reports} relatório{(hb?.total_reports ?? 0) !== 1 ? 's' : ''} IA</span>
+            <span>{hb?.total_reports_ready ?? hb?.total_reports} relatório{((hb?.total_reports_ready ?? hb?.total_reports) ?? 0) !== 1 ? 's' : ''} IA</span>
           </Link>
         )}
 

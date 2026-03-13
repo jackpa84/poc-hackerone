@@ -1,56 +1,161 @@
-# docker-compose.prod.yml — Overrides de produção
+# docker-compose.prod.yml — Overrides de produção (EC2)
 # Uso: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# Diferenças em relação ao ambiente de dev:
-#   - Backend sem --reload (modo produção com múltiplos workers Uvicorn)
+# O que muda em relação ao dev:
+#   - Nginx como reverse proxy (porta 80/443) — backend e frontend não expostos
+#   - Let's Encrypt via certbot container
 #   - Volumes de código-fonte removidos (usa imagem buildada)
-#   - Portas internas do MongoDB e Redis NÃO expostas ao host
-#   - Limites de memória ajustados
-#   - Logging estruturado ativado
+#   - MongoDB e Redis apenas na rede interna
+#   - Logging com rotação (json-file, max 50MB por container)
+#   - Restart policies robustas
+#   - WEB_CONCURRENCY configurável via env
 
 services:
 
+  # ── Reverse proxy com SSL ─────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - public
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Renovação automática de certificados ─────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    # Roda manualmente ou via cron; não fica up permanentemente
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               certbot renew --webroot --webroot-path=/var/www/certbot --quiet;
+               sleep 12h & wait $${!};
+             done"
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ── MongoDB — sem porta exposta ao host ──────────────────────────────────
   mongodb:
-    ports: []   # Remove exposição direta ao host em produção
+    ports: []
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
+  # ── Redis — sem porta exposta ao host ────────────────────────────────────
   redis:
-    ports: []   # Remove exposição direta ao host em produção
+    ports: []
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ── API (FastAPI) — sem porta exposta; acesso via Nginx ──────────────────
   backend:
+    ports: []
     command: >
       uvicorn app.main:app
         --host 0.0.0.0
         --port 8000
-        --workers 4
+        --workers ${WEB_CONCURRENCY:-4}
         --log-level info
         --access-log
         --proxy-headers
         --forwarded-allow-ips "*"
     volumes:
-      # Remove hot-reload de código — usa imagem buildada
+      # Remove hot-reload; mantém ferramentas e socket Docker para scans
+      - ./tools:/app/tools:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - nuclei_templates:/root/.local
+    networks:
+      - internal
     deploy:
       resources:
         limits:
           memory: 768M
           cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
+  # ── Workers ARQ ───────────────────────────────────────────────────────────
   worker:
-    restart: unless-stopped   # Mais robusto que on-failure em prod
+    restart: unless-stopped
     volumes:
-      # Remove hot-reload de código — usa imagem buildada
+      - ./tools:/app/tools:ro
       - nuclei_templates:/root/.local
+    networks:
+      - internal
     deploy:
       replicas: 4
       resources:
         limits:
           memory: 2048M
           cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
 
+  # ── Frontend (Next.js) — sem porta exposta; acesso via Nginx ─────────────
   frontend:
+    ports: []
+    networks:
+      - internal
+      - public
     deploy:
       resources:
         limits:
-          memory: 512M    # Aumentado de 256M (Next.js precisa de mais em prod)
+          memory: 512M
           cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  # Rede pública: apenas nginx e frontend precisam ser alcançáveis
+  public:
+    driver: bridge
+  # Rede interna: todos os serviços; sem rota para fora além do que o Docker permite
+  internal:
+    driver: bridge
+    internal: false  # false porque workers precisam de acesso à internet (ferramentas de scan)
+
+volumes:
+  certbot_webroot:
+  certbot_certs:

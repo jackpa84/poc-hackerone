@@ -26,11 +26,14 @@ async def task_generate_report(ctx, report_id: str):
         return
 
     try:
-        markdown, prompt_tokens, completion_tokens = await generate_report(finding)
+        markdown, prompt_tokens, completion_tokens, model_used = await generate_report(finding)
 
         report.content_markdown  = markdown
         report.prompt_tokens     = prompt_tokens
         report.completion_tokens = completion_tokens
+        report.model_used_actual = model_used
+        report.version          += 1
+        report.is_ready          = True
         await report.save()
 
     except Exception as e:

@@ -55,11 +55,18 @@ export interface ReconDoneEvent {
 }
 
 export interface Heartbeat {
+  // Findings
   total_findings: number
-  active_jobs: number
-  total_reports: number
+  findings_1h?: number
+  findings_24h?: number
   by_severity: Record<string, number>
   by_status: Record<string, number>
+
+  // Jobs
+  active_jobs: number
+  completed_today?: number
+  failed_today?: number
+  jobs_by_type?: Record<string, number>
   recent_jobs: {
     id: string
     type: string
@@ -74,6 +81,36 @@ export interface Heartbeat {
     result: Record<string, unknown> | null
     logs: string[]
     created_at: string
+  }[]
+
+  // Fila ARQ / Redis
+  queue_depth?: number
+  workers_active?: number
+  redis_memory_mb?: number
+
+  // Reports / Pipeline IA
+  total_reports: number
+  total_reports_ready?: number
+  reports_today?: number
+  avg_review_score?: number | null
+
+  // Targets
+  total_targets?: number
+  targets_in_scope?: number
+  targets_with_recon_24h?: number
+
+  // Bounty
+  bounty_earned?: number
+
+  // Saúde dos containers Docker
+  containers?: {
+    name: string
+    state: string
+    status: string
+    started_at: string | null
+    cpu_pct: number | null
+    mem_pct: number | null
+    mem_mb: number | null
   }[]
 }
 

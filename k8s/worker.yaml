@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+      - name: worker
+        image: jackpa/bugbounty-backend:v1
+        imagePullPolicy: IfNotPresent
+        command: ["arq", "app.workers.settings.WorkerSettings"]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 1Gi
+        envFrom:
+        - secretRef:
+            name: bugbounty-secrets
+        env:
+        - name: MONGO_URI
+          value: "mongodb://admin:$(MONGO_PASSWORD)@mongodb:27017/bugbounty?authSource=admin"
+        - name: REDIS_URL
+          value: "redis://redis:6379"
+        - name: MAX_JOBS
+          value: "15"

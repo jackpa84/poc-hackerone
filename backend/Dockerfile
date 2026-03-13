@@ -93,7 +93,15 @@ RUN set -e; \
     && tar xzf /tmp/kiterunner.tar.gz -C /tmp \
     && mv /tmp/kr /usr/local/bin/ \
     && rm /tmp/kiterunner.tar.gz \
-    && echo "✓ kiterunner"
+    && echo "✓ kiterunner"; \
+    \
+    # gospider — web spider com suporte a robots.txt, sitemaps e fontes externas
+    wget -q "https://github.com/jaeles-project/gospider/releases/download/v1.1.6/gospider_v1.1.6_linux_${GOARCH}.zip" \
+        -O /tmp/gospider.zip \
+    && unzip -q /tmp/gospider.zip -d /tmp/gospider \
+    && find /tmp/gospider -name "gospider" -type f -exec mv {} /usr/local/bin/ \; \
+    && rm -rf /tmp/gospider.zip /tmp/gospider \
+    && echo "✓ gospider"
 
 # Kiterunner wordlists (routes-small.kite)
 RUN mkdir -p /usr/local/share/kiterunner \
@@ -106,8 +114,10 @@ RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /usr/local/b
     && echo "✓ sqlmap"
 
 # Arjun — descoberta de parâmetros HTTP (Python via pip)
-# LinkFinder + SecretFinder — análise de JavaScript
-RUN pip install --no-cache-dir arjun
+# uro — deduplicação inteligente de URLs
+# waymore — coleta URLs de múltiplas fontes históricas
+# pyyaml — gerar config do subfinder com API keys
+RUN pip install --no-cache-dir arjun uro waymore pyyaml
 
 # Sobrescreve httpx do pip pela versão CLI do Go (renomeia para evitar conflito)
 # Workers usam "httpx-go" para se referir ao CLI do Go

@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+      - name: worker
+        image: jackpa/bugbounty-backend:v1
+        command: ["arq", "app.workers.settings.WorkerSettings"]
+        envFrom:
+        - secretRef:
+            name: bugbounty-secrets
+        env:
+        - name: MONGO_URI
+          value: "mongodb://admin:$(MONGO_PASSWORD)@mongodb:27017/bugbounty?authSource=admin"
+        - name: REDIS_URL
+          value: "redis://redis:6379"

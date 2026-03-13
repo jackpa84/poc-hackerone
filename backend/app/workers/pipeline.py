@@ -3,14 +3,17 @@ workers/pipeline.py — Pipeline de automação
 
 Orquestra o fluxo de um finding:
   1. Carrega o finding
-  2. Gera relatório com IA (Claude/Ollama)
-  3. Revisão automática da IA (checa formato HackerOne, qualidade do texto)
-  4. Avalia o score de prontidão (checklist de 9 critérios)
+  2. Gera relatório com IA (Claude/Ollama) — rastreia qual modelo foi usado
+  3. Auto-extrai CVSS do relatório e salva no Finding (se não calculado)
+  4. Revisão automática da IA (checa formato HackerOne, qualidade do conteúdo real)
+  5. Avalia o score de prontidão (checklist de 9 critérios)
+  6. Submete ao HackerOne (com retry em caso de falha transiente)
 
 Pode ser disparado:
   - Manualmente via POST /api/pipeline/run
   - Em lote via POST /api/pipeline/run-all (para todos os findings "accepted")
 """
+import asyncio
 import logging
 from datetime import datetime
 from bson import ObjectId
@@ -18,10 +21,14 @@ from bson import ObjectId
 from app.models.finding import Finding
 from app.models.report import Report
 from app.models.job import Job
-from app.services.ai_reporter import generate_report, review_report
+from app.services.ai_reporter import generate_report, review_report, extract_cvss_from_report
 from app.services import events as ev
 
 logger = logging.getLogger(__name__)
+
+# Número máximo de tentativas para submissão ao HackerOne
+H1_SUBMIT_MAX_RETRIES = 3
+H1_SUBMIT_RETRY_DELAY = 5  # segundos entre tentativas
 
 
 async def _update_job(job: Job, log: str, status: str | None = None):
@@ -54,6 +61,7 @@ async def task_auto_pipeline(ctx, job_id: str):
         await _update_job(job, "Finding não encontrado — abortando", "failed")
         job.error = "Finding não encontrado"
         await job.save()
+        await ev.pipeline_step(job.user_id, job_id, "failed", "Finding não encontrado")
         return
 
     await _update_job(job, f"Finding carregado: {finding.title} [{finding.severity.upper()}]")
@@ -63,16 +71,27 @@ async def task_auto_pipeline(ctx, job_id: str):
 
     report = await Report.find_one(Report.finding_id == finding_id)
     if report and report.content_markdown:
-        await _update_job(job, "Relatório já existe — reutilizando")
+        await _update_job(job, f"Relatório já existe (v{report.version}) — limpando revisão para reavaliação")
+        # Limpa campos de revisão anteriores para reavaliação com conteúdo atual
+        report.review_score = None
+        report.review_approved = None
+        report.review_notes = None
+        report.is_ready = False
+        await report.save()
     else:
         try:
-            markdown, prompt_tokens, completion_tokens = await generate_report(finding)
+            markdown, prompt_tokens, completion_tokens, model_used = await generate_report(finding)
 
             if report:
                 report.content_markdown = markdown
                 report.prompt_tokens = prompt_tokens
                 report.completion_tokens = completion_tokens
-                report.is_ready = True
+                report.model_used_actual = model_used
+                report.version += 1
+                report.is_ready = False
+                report.review_score = None
+                report.review_approved = None
+                report.review_notes = None
                 await report.save()
             else:
                 report = Report(
@@ -81,21 +100,31 @@ async def task_auto_pipeline(ctx, job_id: str):
                     content_markdown=markdown,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    is_ready=True,
+                    model_used_actual=model_used,
+                    is_ready=False,
                 )
                 await report.insert()
 
             tok = prompt_tokens + completion_tokens
-            await _update_job(job, f"Relatório gerado ({tok} tokens usados)")
+            await _update_job(job, f"Relatório gerado via {model_used} ({tok} tokens usados)")
             await ev.pipeline_step(job.user_id, job_id, "report_done", f"Relatório gerado ({tok} tokens)")
         except Exception as e:
             await _update_job(job, f"Erro na geração do relatório: {e}", "failed")
             job.error = str(e)
             await job.save()
+            await ev.pipeline_step(job.user_id, job_id, "failed", f"Erro na geração: {e}")
             return
 
+    # ── Passo 2.5: Auto-extrair CVSS do relatório ─────────────────────────
+    if report.content_markdown and finding.cvss_score is None:
+        extracted_cvss = extract_cvss_from_report(report.content_markdown)
+        if extracted_cvss is not None:
+            finding.cvss_score = extracted_cvss
+            await finding.save()
+            await _update_job(job, f"CVSS extraído do relatório e salvo no finding: {extracted_cvss}")
+
     # ── Passo 3: Revisão de qualidade pela IA ─────────────────────────────
-    await _update_job(job, "Revisando qualidade e formato do relatório com IA...")
+    await _update_job(job, "Revisando qualidade e conteúdo do relatório com IA...")
     review = None
     try:
         review = await review_report(
@@ -103,15 +132,13 @@ async def task_auto_pipeline(ctx, job_id: str):
             finding.title,
             finding.severity,
         )
-        review_dict = review.to_dict()
 
-        # Salva resultado da revisão no report
-        await report.set({
-            "review_notes": review_dict,
-            "review_score": review.quality_score,
-            "review_approved": review.approved,
-            "is_ready": review.approved,
-        })
+        # Salva resultado da revisão no report via atribuição direta (preserva validação Pydantic)
+        report.review_notes = review.to_dict()
+        report.review_score = review.quality_score
+        report.review_approved = review.approved
+        report.is_ready = review.approved
+        await report.save()
 
         review_log = (
             f"Revisão concluída: score={review.quality_score}/100 | "
@@ -120,10 +147,13 @@ async def task_auto_pipeline(ctx, job_id: str):
         await _update_job(job, review_log)
 
         if review.missing_sections:
-            await _update_job(job, f"Seções faltando: {', '.join(review.missing_sections)}")
+            await _update_job(job, f"Seções faltando/fracas: {', '.join(review.missing_sections)}")
         if review.issues:
             for issue in review.issues[:3]:
                 await _update_job(job, f"  ⚠ {issue}")
+        if review.suggestions:
+            for suggestion in review.suggestions:
+                await _update_job(job, f"  💡 {suggestion}")
 
         await ev.pipeline_step(
             job.user_id, job_id, "review_done",
@@ -140,15 +170,18 @@ async def task_auto_pipeline(ctx, job_id: str):
     checks_passed = 0
     checks_total = 9
 
-    if len(finding.title or "") > 20:           checks_passed += 1
-    if finding.affected_url:                     checks_passed += 1
-    if len(finding.description or "") >= 100:    checks_passed += 1
-    if len(finding.steps_to_reproduce or "") >= 50: checks_passed += 1
-    if len(finding.impact or "") >= 50:          checks_passed += 1
-    if finding.payload or finding.parameter:     checks_passed += 1
+    # Re-carrega finding para pegar CVSS atualizado
+    finding = await Finding.get(ObjectId(finding_id))
+
+    if len(finding.title or "") > 20:               checks_passed += 1
+    if finding.affected_url:                         checks_passed += 1
+    if len(finding.description or "") >= 100:        checks_passed += 1
+    if len(finding.steps_to_reproduce or "") >= 50:  checks_passed += 1
+    if len(finding.impact or "") >= 50:              checks_passed += 1
+    if finding.payload or finding.parameter:         checks_passed += 1
     if finding.severity != "medium" or finding.cvss_score: checks_passed += 1
-    if finding.cvss_score is not None:           checks_passed += 1
-    if report and report.content_markdown:       checks_passed += 1
+    if finding.cvss_score is not None:               checks_passed += 1
+    if report and report.content_markdown:           checks_passed += 1
 
     score = round(checks_passed / checks_total * 100)
     await _update_job(job, f"Score de prontidão: {score}% ({checks_passed}/{checks_total} critérios)")
@@ -167,30 +200,36 @@ async def task_auto_pipeline(ctx, job_id: str):
 
     if should_submit:
         await _update_job(job, f"Submetendo ao HackerOne (@{team_handle})...")
-        try:
-            from app.services import hackerone as h1
+        from app.services import hackerone as h1
 
-            severity_map = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
-            severity_rating = severity_map.get(finding.severity, "none")
+        severity_map = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
+        severity_rating = severity_map.get(finding.severity, "none")
 
-            result = await h1.submit_report(
-                team_handle=team_handle,
-                title=finding.title,
-                vulnerability_information=report.content_markdown,
-                impact=finding.impact or "Ver relatório completo.",
-                severity_rating=severity_rating,
-            )
-            h1_report_id = result.get("data", {}).get("id")
-            submitted = True
-            await _update_job(job, f"✅ Report #{h1_report_id} enviado ao HackerOne com sucesso!")
-            await ev.pipeline_step(
-                job.user_id, job_id, "submitted",
-                f"Report #{h1_report_id} submetido ao HackerOne",
-                score=score,
-            )
-        except Exception as e:
-            logger.warning("[pipeline] Submissão H1 falhou para job=%s: %s", job_id, e)
-            await _update_job(job, f"⚠ Submissão ao HackerOne falhou: {e}")
+        for attempt in range(1, H1_SUBMIT_MAX_RETRIES + 1):
+            try:
+                result = await h1.submit_report(
+                    team_handle=team_handle,
+                    title=finding.title,
+                    vulnerability_information=report.content_markdown,
+                    impact=finding.impact or "Ver relatório completo.",
+                    severity_rating=severity_rating,
+                )
+                h1_report_id = result.get("data", {}).get("id")
+                submitted = True
+                await _update_job(job, f"✅ Report #{h1_report_id} enviado ao HackerOne com sucesso!")
+                await ev.pipeline_step(
+                    job.user_id, job_id, "submitted",
+                    f"Report #{h1_report_id} submetido ao HackerOne",
+                    score=score,
+                )
+                break
+            except Exception as e:
+                if attempt < H1_SUBMIT_MAX_RETRIES:
+                    await _update_job(job, f"⚠ Tentativa {attempt}/{H1_SUBMIT_MAX_RETRIES} falhou: {e} — retentando em {H1_SUBMIT_RETRY_DELAY}s")
+                    await asyncio.sleep(H1_SUBMIT_RETRY_DELAY)
+                else:
+                    logger.warning("[pipeline] Submissão H1 falhou após %d tentativas para job=%s: %s", H1_SUBMIT_MAX_RETRIES, job_id, e)
+                    await _update_job(job, f"⚠ Submissão ao HackerOne falhou após {H1_SUBMIT_MAX_RETRIES} tentativas: {e}")
     else:
         reasons = []
         if not team_handle:
@@ -208,6 +247,7 @@ async def task_auto_pipeline(ctx, job_id: str):
         "review_approved": review.approved if review else None,
         "submitted": submitted,
         "h1_report_id": h1_report_id,
+        "model_used": report.model_used_actual if report else None,
     }
     job.status = "completed"
     job.finished_at = datetime.utcnow()

@@ -1,6 +1,8 @@
 services:
 
   # ── Banco de dados principal ─────────────────────────────────────────────
+  # OrbStack M4 24GB 90%: sem VM overhead — MongoDB usa 2 cores + 4GB cache
+  # WiredTiger cache = 60% do limite de memória alocado
   mongodb:
     image: mongo:7
     ports:
@@ -12,16 +14,19 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     command: >
       mongod
-        --wiredTigerCacheSizeGB 1
-        --setParameter wiredTigerConcurrentReadTransactions=256
-        --setParameter wiredTigerConcurrentWriteTransactions=128
+        --wiredTigerCacheSizeGB 4
+        --setParameter wiredTigerConcurrentReadTransactions=1024
+        --setParameter wiredTigerConcurrentWriteTransactions=512
         --setParameter diagnosticDataCollectionEnabled=false
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 1280M
+          memory: 6144M
           cpus: "2.0"
+        reservations:
+          memory: 2048M
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 15s
@@ -30,6 +35,8 @@ services:
       start_period: 30s
 
   # ── Fila de tarefas e cache ───────────────────────────────────────────────
+  # OrbStack M4: 6 io-threads (usa 4 efficiency + 2 performance cores do M4)
+  # maxmemory 2GB — pub/sub SSE + fila ARQ com 125+ jobs simultâneos
   redis:
     image: redis:7-alpine
     ports:
@@ -39,25 +46,34 @@ services:
     command: >
       redis-server
         --appendonly yes
-        --maxmemory 256mb
+        --maxmemory 2gb
         --maxmemory-policy allkeys-lru
-        --tcp-backlog 511
+        --tcp-backlog 2048
         --hz 100
-        --io-threads 2
+        --dynamic-hz yes
+        --io-threads 6
+        --io-threads-do-reads yes
+        --lazyfree-lazy-eviction yes
+        --lazyfree-lazy-expire yes
         --save ""
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 320M
-          cpus: "1.0"
+          memory: 2560M
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 15s
+      interval: 10s
       timeout: 3s
       retries: 5
 
   # ── API principal (FastAPI) ───────────────────────────────────────────────
+  # OrbStack M4 90%: 6 uvicorn workers para 3 cores performance
+  # OrbStack monta volumes sem VM — reload é quase instantâneo
   backend:
     build: ./backend
     ports:
@@ -79,8 +95,15 @@ services:
       HACKERONE_API_TOKEN: ${HACKERONE_API_TOKEN:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-xploiter/the-xploiter:latest}
-      # Uvicorn workers = cores disponíveis
-      WEB_CONCURRENCY: 4
+      URLSCAN_API_KEY: ${URLSCAN_API_KEY:-}
+      OTX_API_KEY: ${OTX_API_KEY:-}
+      SHODAN_API_KEY: ${SHODAN_API_KEY:-}
+      CENSYS_API_ID: ${CENSYS_API_ID:-}
+      CENSYS_API_SECRET: ${CENSYS_API_SECRET:-}
+      CHAOS_API_KEY: ${CHAOS_API_KEY:-}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      SECURITYTRAILS_TOKEN: ${SECURITYTRAILS_TOKEN:-}
+      WEB_CONCURRENCY: 6
     volumes:
       - ./tools:/app/tools
       - ./backend/app:/app/app
@@ -93,8 +116,11 @@ services:
     deploy:
       resources:
         limits:
+          memory: 3072M
+          cpus: "3.0"
+        reservations:
           memory: 512M
-          cpus: "2.0"
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -102,7 +128,10 @@ services:
       retries: 3
       start_period: 40s
 
-  # ── Workers de background (2 réplicas) ──────────────────────────────────
+  # ── Workers de background ────────────────────────────────────────────────
+  # OrbStack M4 90%: 5 réplicas × 1.5 cores = 7.5 cores para recon
+  # MAX_JOBS=25 por worker = 125 jobs simultâneos no total
+  # OrbStack: volume mounts nativos — nuclei/ffuf rodam em velocidade nativa
   worker:
     build: ./backend
     depends_on:
@@ -119,6 +148,15 @@ services:
       HACKERONE_USERNAME: ${HACKERONE_USERNAME:-}
       HACKERONE_API_USERNAME: ${HACKERONE_API_USERNAME:-}
       HACKERONE_API_TOKEN: ${HACKERONE_API_TOKEN:-}
+      URLSCAN_API_KEY: ${URLSCAN_API_KEY:-}
+      OTX_API_KEY: ${OTX_API_KEY:-}
+      SHODAN_API_KEY: ${SHODAN_API_KEY:-}
+      CENSYS_API_ID: ${CENSYS_API_ID:-}
+      CENSYS_API_SECRET: ${CENSYS_API_SECRET:-}
+      CHAOS_API_KEY: ${CHAOS_API_KEY:-}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      SECURITYTRAILS_TOKEN: ${SECURITYTRAILS_TOKEN:-}
+      MAX_JOBS: 25
     volumes:
       - ./tools:/app/tools
       - ./backend/app:/app/app
@@ -128,20 +166,24 @@ services:
     command: arq app.workers.settings.WorkerSettings
     restart: on-failure
     deploy:
-      replicas: 4
+      replicas: 5
       resources:
         limits:
-          memory: 2048M
-          cpus: "2.0"
-    # Permite mais file descriptors para ferramentas de scan
+          memory: 3072M
+          cpus: "1.5"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
     ulimits:
       nofile:
-        soft: 65536
-        hard: 65536
+        soft: 262144
+        hard: 262144
     sysctls:
-      net.core.somaxconn: 1024
+      net.core.somaxconn: 8192
+      net.ipv4.tcp_tw_reuse: 1
 
-  # ── Interface web (Next.js) ───────────────────────────────────────────────
+  # ── Interface web (Next.js) — produção ───────────────────────────────────
+  # OrbStack: volume mount nativo = hot reload instantâneo se usar --profile dev
   frontend:
     build: ./frontend
     ports:
@@ -155,8 +197,30 @@ services:
     deploy:
       resources:
         limits:
+          memory: 768M
+          cpus: "1.5"
+        reservations:
           memory: 256M
-          cpus: "1.0"
+          cpus: "0.25"
+
+  # ── Frontend dev com hot reload (use: docker compose --profile dev up) ───
+  frontend-dev:
+    image: node:20-alpine
+    profiles: [dev]
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api
+      NEXT_TELEMETRY_DISABLED: 1
+      WATCHPACK_POLLING: "true"
 
   # ── UI para o MongoDB (iniciar manualmente quando precisar) ───────────────
   mongo-express:

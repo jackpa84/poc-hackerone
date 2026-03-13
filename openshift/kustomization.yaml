@@ -1,0 +1,52 @@
+# ── Kustomize — aplica todos os recursos em ordem ─────────────────────────────
+#
+# Deploy completo:
+#   oc apply -k openshift/
+#
+# Deploy por partes (recomendado na primeira vez):
+#   1. oc apply -f openshift/namespace.yaml
+#   2. oc project bugbounty
+#   3. oc apply -f openshift/serviceaccounts.yaml
+#   4. oc apply -f openshift/secrets.yaml        # edite os valores antes!
+#   5. oc apply -f openshift/configmap.yaml
+#   6. oc apply -f openshift/mongodb.yaml
+#   7. oc apply -f openshift/redis.yaml
+#   8. oc apply -f openshift/ollama.yaml
+#   9. oc apply -f openshift/backend.yaml
+#  10. oc apply -f openshift/worker.yaml
+#  11. oc apply -f openshift/frontend.yaml
+#  12. oc apply -f openshift/routes.yaml
+#  13. oc apply -f openshift/hpa.yaml
+#
+# Após aplicar os Routes, atualize NEXT_PUBLIC_API_URL no ConfigMap:
+#   BACKEND_HOST=$(oc get route backend -n bugbounty -o jsonpath='{.spec.host}')
+#   oc patch configmap bugbounty-config -n bugbounty \
+#     --type merge -p "{\"data\":{\"NEXT_PUBLIC_API_URL\":\"https://${BACKEND_HOST}/api\"}}"
+#   oc rollout restart deployment/frontend -n bugbounty
+#
+# Verificar status:
+#   oc get all -n bugbounty
+#   oc get routes -n bugbounty
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: bugbounty
+
+resources:
+- namespace.yaml
+- serviceaccounts.yaml
+- secrets.yaml
+- configmap.yaml
+- mongodb.yaml
+- redis.yaml
+- ollama.yaml
+- backend.yaml
+- worker.yaml
+- frontend.yaml
+- routes.yaml
+- hpa.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: bugbounty-platform
+  app.kubernetes.io/managed-by: kustomize

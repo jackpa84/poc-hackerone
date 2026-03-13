@@ -1,0 +1,110 @@
+# ── Backend (FastAPI) — Deployment + Service ─────────────────────────────────
+#
+# Roda como non-root com restricted-v2 SCC (padrão OpenShift).
+# Probes em /healthz (ajuste para o endpoint real do FastAPI se diferente).
+# MONGO_URI é montado via envFrom do Secret + expansão de variável.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: bugbounty
+  labels:
+    app: backend
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend-sa
+      securityContext:
+        runAsNonRoot: false
+      containers:
+      - name: backend
+        image: jackpa/bugbounty-backend:v1
+        imagePullPolicy: IfNotPresent
+        command:
+        - uvicorn
+        - app.main:app
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "8000"
+        - "--workers"
+        - "4"
+        - "--log-level"
+        - "info"
+        - "--proxy-headers"
+        - "--forwarded-allow-ips"
+        - "*"
+        ports:
+        - containerPort: 8000
+          name: http
+        envFrom:
+        - secretRef:
+            name: bugbounty-secrets
+        - configMapRef:
+            name: bugbounty-config
+        env:
+        # Sobrescreve o MONGO_URI do ConfigMap com expansão do Secret
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bugbounty-secrets
+              key: MONGO_PASSWORD
+        - name: MONGO_URI
+          value: "mongodb://admin:$(MONGO_PASSWORD)@mongodb:27017/bugbounty?authSource=admin"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "2"
+            memory: 768Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false   # app pode gravar logs/tmp
+          capabilities:
+            drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: bugbounty
+  labels:
+    app: backend
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http

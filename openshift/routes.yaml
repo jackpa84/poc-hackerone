@@ -1,0 +1,76 @@
+# ── Ingress — acesso externo (Kubernetes padrão) ──────────────────────────────
+#
+# Substitui os OpenShift Routes quando a CRD route.openshift.io/v1 não existe.
+#
+# Pré-requisito: Ingress Controller instalado (nginx, HAProxy, traefik, etc.)
+#   kubectl get ingressclass
+#
+# Ajuste o campo `host` para o domínio real do seu cluster.
+# Para descobrir o domínio base em OpenShift real:
+#   oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
+#
+# Após aplicar, atualize NEXT_PUBLIC_API_URL no ConfigMap:
+#   BACKEND_HOST=$(kubectl get ingress backend -n bugbounty -o jsonpath='{.spec.rules[0].host}')
+#   oc patch configmap bugbounty-config -n bugbounty \
+#     --type merge -p "{\"data\":{\"NEXT_PUBLIC_API_URL\":\"https://${BACKEND_HOST}/api\"}}"
+#   oc rollout restart deployment/frontend -n bugbounty
+
+# ── Ingress: Frontend ─────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: bugbounty
+  labels:
+    app: frontend
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  # ingressClassName: nginx   # descomente e ajuste para o IngressClass do seu cluster
+  rules:
+  - host: bugbounty.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              name: http
+  # tls:
+  # - hosts:
+  #   - bugbounty.CHANGEME_CLUSTER_DOMAIN
+  #   secretName: frontend-tls
+---
+# ── Ingress: Backend API ──────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend
+  namespace: bugbounty
+  labels:
+    app: backend
+  annotations:
+    # SSE precisa de timeout longo e sem buffer
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  # ingressClassName: nginx   # descomente e ajuste para o IngressClass do seu cluster
+  rules:
+  - host: eb13-2804-d55-807d-3c00-2544-2883-ae3d-d778.ngrok-free.app
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              name: http
+  # tls:
+  # - hosts:
+  #   - api-bugbounty.CHANGEME_CLUSTER_DOMAIN
+  #   secretName: backend-tls

@@ -1,0 +1,147 @@
+# ── Ollama — Deployment + PVC + Service ──────────────────────────────────────
+#
+# Imagem do servidor: ollama/ollama:latest
+# Modelo carregado: xploiter/the-xploiter (via ollama pull no initContainer)
+# Porta padrão Ollama: 11434
+#
+# GPU (opcional): descomente o bloco `resources.limits` com nvidia.com/gpu
+# para usar aceleração de hardware. Requer o GPU Operator instalado no cluster.
+#
+# PVC: modelos ficam em /root/.ollama (~10-30GB dependendo dos modelos).
+# Ajuste o storageClassName para o StorageClass disponível no seu cluster.
+#
+# Modelo padrão: definido por OLLAMA_MODEL no ConfigMap (bugbounty-config).
+# Para pré-carregar um modelo na inicialização, adicione um initContainer
+# com: ollama pull <modelo>
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-data
+  namespace: bugbounty
+  labels:
+    app: ollama
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 30Gi
+  # storageClassName: "gp3"  # ajuste para o StorageClass do seu cluster
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: bugbounty
+  labels:
+    app: ollama
+    app.kubernetes.io/component: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  strategy:
+    type: Recreate   # evita dois pods tentando escrever no mesmo PVC
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      serviceAccountName: backend-sa   # restricted-v2, sem privilégios especiais
+      securityContext:
+        runAsNonRoot: false   # imagem Ollama roda como root por padrão
+        fsGroup: 0
+      initContainers:
+      # Pré-carrega o modelo definido em OLLAMA_MODEL ao subir o pod
+      - name: pull-model
+        image: ollama/ollama:latest
+        command:
+        - sh
+        - "-c"
+        - |
+          ollama serve &
+          SERVER_PID=$!
+          sleep 5
+          ollama pull ${OLLAMA_MODEL:-llama3}
+          kill $SERVER_PID
+        env:
+        - name: OLLAMA_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: bugbounty-config
+              key: OLLAMA_MODEL
+        - name: HOME
+          value: /root
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 11434
+          name: http
+        env:
+        - name: HOME
+          value: /root
+        - name: OLLAMA_HOST
+          value: "0.0.0.0"
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+            # nvidia.com/gpu: "1"   # descomente para usar GPU (requer GPU Operator)
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+      volumes:
+      - name: ollama-data
+        persistentVolumeClaim:
+          claimName: ollama-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: bugbounty
+  labels:
+    app: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+  - port: 11434
+    targetPort: 11434
+    name: http
