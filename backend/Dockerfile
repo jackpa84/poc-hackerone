@@ -95,13 +95,13 @@ RUN set -e; \
     && rm /tmp/kiterunner.tar.gz \
     && echo "✓ kiterunner"; \
     \
-    # gospider — web spider com suporte a robots.txt, sitemaps e fontes externas
-    wget -q "https://github.com/jaeles-project/gospider/releases/download/v1.1.6/gospider_v1.1.6_linux_${GOARCH}.zip" \
+    # gospider — web spider (opcional: naming varia por versão/arch)
+    ( wget -q "https://github.com/jaeles-project/gospider/releases/download/v1.1.6/gospider_v1.1.6_linux_${GOARCH}.zip" \
         -O /tmp/gospider.zip \
     && unzip -q /tmp/gospider.zip -d /tmp/gospider \
     && find /tmp/gospider -name "gospider" -type f -exec mv {} /usr/local/bin/ \; \
     && rm -rf /tmp/gospider.zip /tmp/gospider \
-    && echo "✓ gospider"
+    && echo "✓ gospider" ) || echo "⚠ gospider não disponível (opcional)"
 
 # Kiterunner wordlists (routes-small.kite)
 RUN mkdir -p /usr/local/share/kiterunner \
