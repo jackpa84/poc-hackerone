@@ -62,6 +62,8 @@ app.add_middleware(
         "http://0.0.0.0:3000",
         "http://frontend:3000",
         "https://a986-2804-d55-807d-3c00-2544-2883-ae3d-d778.ngrok-free.app",
+        "http://frontend-jackpa1984-dev.apps.rm2.thpm.p1.openshiftapps.com",
+        "https://frontend-jackpa1984-dev.apps.rm2.thpm.p1.openshiftapps.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
