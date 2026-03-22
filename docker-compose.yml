@@ -14,19 +14,19 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     command: >
       mongod
-        --wiredTigerCacheSizeGB 4
-        --setParameter wiredTigerConcurrentReadTransactions=1024
-        --setParameter wiredTigerConcurrentWriteTransactions=512
+        --wiredTigerCacheSizeGB 1
+        --setParameter wiredTigerConcurrentReadTransactions=128
+        --setParameter wiredTigerConcurrentWriteTransactions=64
         --setParameter diagnosticDataCollectionEnabled=false
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 6144M
-          cpus: "2.0"
-        reservations:
-          memory: 2048M
+          memory: 1536M
           cpus: "0.5"
+        reservations:
+          memory: 512M
+          cpus: "0.1"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 15s
@@ -46,13 +46,11 @@ services:
     command: >
       redis-server
         --appendonly yes
-        --maxmemory 2gb
+        --maxmemory 512mb
         --maxmemory-policy allkeys-lru
-        --tcp-backlog 2048
-        --hz 100
+        --tcp-backlog 512
+        --hz 10
         --dynamic-hz yes
-        --io-threads 6
-        --io-threads-do-reads yes
         --lazyfree-lazy-eviction yes
         --lazyfree-lazy-expire yes
         --save ""
@@ -60,11 +58,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2560M
-          cpus: "2.0"
+          memory: 640M
+          cpus: "0.25"
         reservations:
-          memory: 512M
-          cpus: "0.5"
+          memory: 128M
+          cpus: "0.05"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -103,7 +101,7 @@ services:
       CHAOS_API_KEY: ${CHAOS_API_KEY:-}
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       SECURITYTRAILS_TOKEN: ${SECURITYTRAILS_TOKEN:-}
-      WEB_CONCURRENCY: 6
+      WEB_CONCURRENCY: 2
     volumes:
       - ./tools:/app/tools
       - ./backend/app:/app/app
@@ -116,11 +114,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3072M
-          cpus: "3.0"
+          memory: 768M
+          cpus: "0.5"
         reservations:
-          memory: 512M
-          cpus: "1.0"
+          memory: 256M
+          cpus: "0.1"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -156,7 +154,7 @@ services:
       CHAOS_API_KEY: ${CHAOS_API_KEY:-}
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       SECURITYTRAILS_TOKEN: ${SECURITYTRAILS_TOKEN:-}
-      MAX_JOBS: 25
+      MAX_JOBS: 5
     volumes:
       - ./tools:/app/tools
       - ./backend/app:/app/app
@@ -166,14 +164,14 @@ services:
     command: arq app.workers.settings.WorkerSettings
     restart: on-failure
     deploy:
-      replicas: 5
+      replicas: 1
       resources:
         limits:
-          memory: 3072M
-          cpus: "1.5"
-        reservations:
           memory: 512M
           cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.1"
     ulimits:
       nofile:
         soft: 262144
@@ -197,11 +195,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
-          cpus: "1.5"
-        reservations:
-          memory: 256M
+          memory: 512M
           cpus: "0.25"
+        reservations:
+          memory: 128M
+          cpus: "0.05"
 
   # ── Frontend dev com hot reload (use: docker compose --profile dev up) ───
   frontend-dev:
